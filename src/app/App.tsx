@@ -25,6 +25,11 @@ import { Button } from "./components/ui/button";
 
 export type UserRole = "admin" | "user";
 export type FileCategory = "all" | "cad" | "recent";
+type WorkspaceContext = {
+  nodeName?: string;
+  nodePath?: string;
+  assignee?: string;
+};
 
 export default function App() {
   const [activeView, setActiveView] = useState<
@@ -48,11 +53,12 @@ export default function App() {
   const [currentBranchId, setCurrentBranchId] = useState<string>("");
   const [workspaceViewMode, setWorkspaceViewMode] = useState<"edit" | "preview">("edit");
   const [currentNodeType, setCurrentNodeType] = useState<"assembly" | "part">("assembly");
+  const [workspaceContext, setWorkspaceContext] = useState<WorkspaceContext>({});
 
   const allNavItems = [
     {
       id: "projects" as const,
-      label: "项目大厅1",
+      label: "项目大厅",
       icon: FolderTree,
       roles: ["admin", "user"],
     },
@@ -128,10 +134,16 @@ export default function App() {
     setActiveView("project-detail");
   };
 
-  const handleNavigateToWorkspace = (branchId: string, viewMode: "edit" | "preview" = "edit", nodeType: "assembly" | "part" = "assembly") => {
+  const handleNavigateToWorkspace = (
+    branchId: string,
+    viewMode: "edit" | "preview" = "edit",
+    nodeType: "assembly" | "part" = "assembly",
+    context: WorkspaceContext = {},
+  ) => {
     setCurrentBranchId(branchId);
     setWorkspaceViewMode(viewMode);
     setCurrentNodeType(nodeType);
+    setWorkspaceContext(context);
     setActiveView("workspace");
   };
 
@@ -182,6 +194,10 @@ export default function App() {
         onBack={handleBackToProjectDetail}
         viewMode={workspaceViewMode}
         nodeType={currentNodeType}
+        currentUser={userRole === "admin" ? "张三" : "李四"}
+        nodeName={workspaceContext.nodeName}
+        nodePath={workspaceContext.nodePath}
+        assignee={workspaceContext.assignee}
       />
     );
   }

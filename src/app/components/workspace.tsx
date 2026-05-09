@@ -93,6 +93,10 @@ interface WorkspaceProps {
   onBack: () => void;
   viewMode?: "edit" | "preview";
   nodeType?: "assembly" | "part";
+  currentUser?: string;
+  nodeName?: string;
+  nodePath?: string;
+  assignee?: string;
 }
 
 export function Workspace({
@@ -100,6 +104,10 @@ export function Workspace({
   onBack,
   viewMode = "edit",
   nodeType = "assembly",
+  currentUser = "张三",
+  nodeName = "气缸体组件",
+  nodePath = "/发动机总成/气缸体组件",
+  assignee,
 }: WorkspaceProps) {
   const [showCreatePartDialog, setShowCreatePartDialog] =
     useState(false);
@@ -144,16 +152,10 @@ export function Workspace({
   // Mock workspace data - 根据branchId获取对应的工作区信息
   const workspace = {
     branchId: branchId,
-    nodeName: "气缸体组件",
-    nodePath: "/发动机总成/气缸体组件",
+    nodeName,
+    nodePath,
     projectName: "发动机装配项目",
-    assignee: branchId.includes("lisi")
-      ? "李四"
-      : branchId.includes("wangwu")
-        ? "王五"
-        : branchId.includes("zhangsan")
-          ? "张三"
-          : "李四",
+    assignee: assignee ?? currentUser,
     lastModified: "2024-03-20",
     hasUncommittedChanges: true,
   };
@@ -582,7 +584,12 @@ export function Workspace({
                     if (pathParts.length === 1) {
                       return `/${pathParts[0]}（${workspace.branchId}）`;
                     }
-                    return `/${pathParts[0]}（main）/${pathParts.slice(1, -1).join('/')}${pathParts.length > 2 ? '/' : ''}${pathParts[pathParts.length - 1]}（${workspace.branchId}）`;
+                    const parentPath = pathParts
+                      .slice(1, -1)
+                      .map((part) => `${part}（main）`)
+                      .join("/");
+                    const parentPrefix = parentPath ? `/${parentPath}` : "";
+                    return `/${pathParts[0]}（main）${parentPrefix}/${pathParts[pathParts.length - 1]}（${workspace.branchId}）`;
                   })()}
                 </span>
               </div>
@@ -898,188 +905,268 @@ export function Workspace({
                   )}
 
                   {(() => {
-                    // 获取所有相关的提交（不只是当前分支）
-                    let filteredCommits;
-                    if (previewingNode) {
-                      filteredCommits = commits.filter((c) => c.nodeId === previewingNode.id).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-                    } else {
-                      // 获取所有没有nodeId的提交（分支级别的提交），显示完整的分支图
-                      filteredCommits = commits.filter((c) => !c.nodeId).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                    const filteredCommits = (
+                      previewingNode
+                        ? commits.filter((c) => c.nodeId === previewingNode.id)
+                        : commits.filter((c) => !c.nodeId)
+                    ).sort(
+                      (a, b) =>
+                        new Date(b.date).getTime() -
+                        new Date(a.date).getTime(),
+                    );
+
+                    if (filteredCommits.length === 0) {
+                      return (
+                        <div className="text-center py-12">
+                          <p className="text-gray-500 text-sm">
+                            暂无提交记录
+                          </p>
+                        </div>
+                      );
                     }
 
-                    // 为每个提交分配一个列（分支）
                     const branchColors: Record<string, string> = {
-                      "main": "#3b82f6",
+                      main: "#3b82f6",
                       "branch-1-lisi": "#10b981",
                       "branch-1-wangwu": "#f59e0b",
                       "branch-root-lisi": "#8b5cf6",
                       "branch-4-zhangsan": "#ec4899",
                       "branch-2-sunqi": "#06b6d4",
+                      "branch-1-1-wangwu": "#06b6d4",
+                      "branch-1-2-zhaoliu": "#f59e0b",
+                      "branch-1-3-wangwu": "#22c55e",
+                      "branch-1-3-sunqi": "#a855f7",
                     };
-
+                    const fallbackColors = [
+                      "#14b8a6",
+                      "#f97316",
+                      "#60a5fa",
+                      "#e879f9",
+                    ];
                     const branchColumns: Record<string, number> = {};
+                    const commitIndexById = new Map<string, number>();
+                    const commitById = new Map<string, CommitRecord>();
                     let nextColumn = 0;
 
-                    filteredCommits.forEach(commit => {
-                      if (commit.branchId && !branchColumns[commit.branchId]) {
-                        branchColumns[commit.branchId] = nextColumn++;
+                    filteredCommits.forEach((commit, index) => {
+                      commitIndexById.set(commit.id, index);
+                      commitById.set(commit.id, commit);
+                      if (
+                        commit.branchId &&
+                        branchColumns[commit.branchId] === undefined
+                      ) {
+                        branchColumns[commit.branchId] = nextColumn;
+                        nextColumn += 1;
                       }
                     });
 
-                    return filteredCommits.map((commit, index) => {
-                      const isSelected = (previewingNode || viewMode === "preview")
-                        ? selectedCommitVersion === commit.id ||
-                          (!selectedCommitVersion && index === 0)
-                        : false;
+                    const rowHeight = 28;
+                    const graphPadding = 10;
+                    const laneGap = 10;
+                    const strokeWidth = 1.25;
+                    const longEdgeLimit = rowHeight * 999;
+                    const graphWidth = Math.max(
+                      graphPadding * 2 + Math.max(nextColumn, 1) * laneGap,
+                      82,
+                    );
+                    const graphHeight = filteredCommits.length * rowHeight;
+                    const getColumn = (commit: CommitRecord) =>
+                      commit.branchId
+                        ? branchColumns[commit.branchId] ?? 0
+                        : 0;
+                    const getColor = (commit: CommitRecord) => {
+                      if (commit.branchId && branchColors[commit.branchId]) {
+                        return branchColors[commit.branchId];
+                      }
+                      return fallbackColors[getColumn(commit) % fallbackColors.length];
+                    };
+                    const getX = (commit: CommitRecord) =>
+                      graphPadding + getColumn(commit) * laneGap;
+                    const getY = (index: number) =>
+                      index * rowHeight + rowHeight / 2;
+                    const isSelectable = viewMode === "preview" || previewingNode;
 
-                      const column = commit.branchId ? (branchColumns[commit.branchId] || 0) : 0;
-                      const branchColor = commit.branchId ? (branchColors[commit.branchId] || "#6b7280") : "#6b7280";
-                      const hasMerge = commit.parentIds && commit.parentIds.length > 1;
+                    return (
+                      <div className="min-w-[320px] pb-2">
+                        <div className="mb-1 flex h-5 items-center justify-between border-b border-gray-700/70 px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-300">
+                          <span>Graph</span>
+                          <span className="font-normal normal-case tracking-normal text-gray-500">
+                            {filteredCommits.length} items
+                          </span>
+                        </div>
 
-                      // 检查是否有子提交（指向当前提交的提交）
-                      const hasChildren = filteredCommits.some(c => c.parentIds?.includes(commit.id));
-                      // 检查当前提交的父提交
-                      const parentInList = commit.parentIds?.[0] ? filteredCommits.find(c => c.id === commit.parentIds[0]) : null;
+                        <div className="relative">
+                        <svg
+                          className="absolute left-0 top-0 pointer-events-none"
+                          width={graphWidth}
+                          height={graphHeight}
+                          viewBox={`0 0 ${graphWidth} ${graphHeight}`}
+                          aria-hidden="true"
+                        >
+                          {filteredCommits.flatMap((commit, index) => {
+                            const parentIds = commit.parentIds ?? [];
+                            const currentX = getX(commit);
+                            const currentY = getY(index);
 
-                      return (
-                        <div key={commit.id} className="flex items-start gap-3">
-                          {/* Branch visualization */}
-                          <div className="relative flex-shrink-0" style={{ width: `${Math.max(nextColumn * 20 + 20, 40)}px`, height: "80px" }}>
-                            {/* Vertical line to parent commit */}
-                            {parentInList && (
-                              <div
-                                className="absolute top-0 h-10 w-0.5"
-                                style={{
-                                  left: `${column * 20 + 10}px`,
-                                  backgroundColor: branchColor,
-                                }}
-                              />
-                            )}
-                            {/* Vertical line to child commits */}
-                            {hasChildren && (
-                              <div
-                                className="absolute bottom-0 h-10 w-0.5"
-                                style={{
-                                  left: `${column * 20 + 10}px`,
-                                  backgroundColor: branchColor,
-                                  top: "50%",
-                                }}
-                              />
-                            )}
-                            {/* Merge lines - lines from merged branches */}
-                            {hasMerge && commit.parentIds && commit.parentIds.length > 1 && (
-                              commit.parentIds.slice(1).map((parentId, idx) => {
-                                const parentCommit = commits.find(c => c.id === parentId);
-                                if (!parentCommit || !parentCommit.branchId) return null;
-                                const parentColumn = branchColumns[parentCommit.branchId] || 0;
-                                const parentColor = branchColors[parentCommit.branchId] || "#6b7280";
+                            return parentIds
+                              .map((parentId) => {
+                                const parentIndex =
+                                  commitIndexById.get(parentId);
+                                const parentCommit = commitById.get(parentId);
+
+                                if (
+                                  parentIndex === undefined ||
+                                  !parentCommit
+                                ) {
+                                  return null;
+                                }
+
+                                const parentX = getX(parentCommit);
+                                const parentY = getY(parentIndex);
+                                const color = getColor(commit);
+
+                                const distance = Math.abs(parentY - currentY);
+
+                                if (currentX === parentX) {
+                                  if (distance > longEdgeLimit) {
+                                    const segmentHeight = rowHeight * 0.45;
+
+                                    return (
+                                      <g key={`${commit.id}-${parentId}`}>
+                                        <line
+                                          x1={currentX}
+                                          y1={currentY + 8}
+                                          x2={currentX}
+                                          y2={currentY + segmentHeight}
+                                          stroke={color}
+                                          strokeWidth={strokeWidth}
+                                          strokeLinecap="round"
+                                          strokeOpacity="0.78"
+                                        />
+                                        <line
+                                          x1={parentX}
+                                          y1={parentY - segmentHeight}
+                                          x2={parentX}
+                                          y2={parentY - 8}
+                                          stroke={color}
+                                          strokeWidth={strokeWidth}
+                                          strokeLinecap="round"
+                                          strokeOpacity="0.78"
+                                        />
+                                      </g>
+                                    );
+                                  }
+
+                                  return (
+                                    <line
+                                      key={`${commit.id}-${parentId}`}
+                                      x1={currentX}
+                                      y1={currentY + 5}
+                                      x2={parentX}
+                                      y2={parentY - 5}
+                                      stroke={color}
+                                      strokeWidth={strokeWidth}
+                                      strokeLinecap="round"
+                                      strokeOpacity="0.78"
+                                    />
+                                  );
+                                }
+
+                                const midY =
+                                  currentY +
+                                  Math.min(distance * 0.42, rowHeight * 0.75);
+                                const elbowY = Math.min(
+                                  parentY - 5,
+                                  currentY + rowHeight * 0.95,
+                                );
 
                                 return (
-                                  <div
-                                    key={idx}
-                                    className="absolute h-0.5"
-                                    style={{
-                                      top: "40px",
-                                      left: `${Math.min(column, parentColumn) * 20 + 10}px`,
-                                      width: `${Math.abs(column - parentColumn) * 20}px`,
-                                      backgroundColor: parentColor,
-                                    }}
+                                  <path
+                                    key={`${commit.id}-${parentId}`}
+                                    d={`M ${currentX} ${currentY + 5} C ${currentX} ${midY}, ${parentX} ${midY}, ${parentX} ${elbowY} L ${parentX} ${parentY - 5}`}
+                                    fill="none"
+                                    stroke={color}
+                                    strokeWidth={strokeWidth}
+                                    strokeLinecap="round"
+                                    strokeOpacity="0.68"
                                   />
                                 );
                               })
-                            )}
-                            {/* Branch split lines - when a commit is from a different branch than parent */}
-                            {parentInList && parentInList.branchId !== commit.branchId && (
-                              <div
-                                className="absolute h-0.5"
-                                style={{
-                                  top: "40px",
-                                  left: `${Math.min(column, branchColumns[parentInList.branchId] || 0) * 20 + 10}px`,
-                                  width: `${Math.abs(column - (branchColumns[parentInList.branchId] || 0)) * 20}px`,
-                                  backgroundColor: branchColor,
-                                }}
-                              />
-                            )}
-                            {/* Commit node */}
-                            <div
-                              className="absolute w-3 h-3 rounded-full border-2"
-                              style={{
-                                left: `${column * 20 + 4}px`,
-                                top: "40px",
-                                transform: "translateY(-50%)",
-                                backgroundColor: isSelected ? branchColor : "#1f2937",
-                                borderColor: branchColor,
-                              }}
-                            />
-                          </div>
+                              .filter(Boolean);
+                          })}
+                        </svg>
 
-                          {/* Commit content */}
-                          <div
-                            className="flex-1 group/commit"
-                            onClick={() => {
-                              if (viewMode === "preview" || previewingNode) {
-                                setSelectedCommitVersion(commit.id);
-                              }
-                            }}
-                          >
+                        {filteredCommits.map((commit, index) => {
+                          const isSelected = isSelectable
+                            ? selectedCommitVersion === commit.id ||
+                              (!selectedCommitVersion && index === 0)
+                            : false;
+                          const branchColor = getColor(commit);
+                          const x = getX(commit);
+
+                          return (
                             <div
-                              className={`p-3 rounded-lg transition-all ${
-                                isSelected
-                                  ? "bg-blue-600 ring-2 ring-blue-400"
-                                  : "bg-gray-700/50 hover:bg-gray-700"
-                              } ${viewMode === "preview" || previewingNode ? "cursor-pointer" : ""}`}
+                              key={commit.id}
+                              className="grid items-center"
+                              style={{
+                                gridTemplateColumns: `${graphWidth}px minmax(0, 1fr)`,
+                                minHeight: `${rowHeight}px`,
+                              }}
                             >
-                              <div
-                                className={`text-sm font-medium truncate group-hover/commit:whitespace-normal ${isSelected ? "text-white" : "text-gray-200"}`}
-                                title={commit.message}
-                              >
-                                {commit.message}
-                              </div>
-                              <div className="flex items-center justify-between gap-2 mt-2 opacity-0 group-hover/commit:opacity-100 transition-opacity max-h-0 group-hover/commit:max-h-20 overflow-hidden">
+                              <div className="relative h-full">
                                 <div
-                                  className={`text-xs ${
+                                  className="absolute top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full border shadow-[0_0_0_1.5px_rgba(31,41,55,1)]"
+                                  style={{
+                                    left: `${x}px`,
+                                    borderColor: branchColor,
+                                    backgroundColor: branchColor,
+                                  }}
+                                />
+                              </div>
+
+                              <button
+                                type="button"
+                                disabled={!isSelectable}
+                                onClick={() => {
+                                  if (isSelectable) {
+                                    setSelectedCommitVersion(commit.id);
+                                  }
+                                }}
+                                className={`flex h-7 min-w-0 items-center gap-2 rounded-sm px-1.5 text-left transition-colors disabled:cursor-default ${
+                                  isSelected
+                                    ? "bg-gray-600/60 text-white"
+                                    : "text-gray-300 hover:bg-gray-700/45"
+                                }`}
+                              >
+                                <span
+                                  className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5"
+                                  title={commit.message}
+                                >
+                                  {commit.message}
+                                </span>
+                                <div
+                                  className={`flex shrink-0 items-center gap-1.5 text-[11px] leading-4 ${
                                     isSelected
-                                      ? "text-blue-100"
-                                      : "text-gray-400"
+                                      ? "text-gray-200"
+                                      : "text-gray-500"
                                   }`}
                                 >
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <span>{commit.author}</span>
-                                    <span>·</span>
-                                    <span>{commit.date}</span>
-                                  </div>
-                                  {commit.branchId && (
-                                    <div className="flex items-center gap-1">
-                                      <GitBranch className="w-3 h-3" />
-                                      <span className="truncate max-w-[200px]" title={commit.branchId}>{commit.branchId}</span>
-                                    </div>
-                                  )}
+                                  <span className="truncate">
+                                    {workspace.assignee} · {commit.date}
+                                  </span>
+                                  {index === 0 &&
+                                    !selectedCommitVersion &&
+                                    isSelectable && (
+                                      <Badge className="shrink-0 bg-blue-500/20 text-blue-300 border-blue-500/30 px-1.5 py-0 text-[10px]">
+                                        最新
+                                      </Badge>
+                                    )}
                                 </div>
-                                {index === 0 &&
-                                  !selectedCommitVersion &&
-                                  (viewMode === "preview" || previewingNode) && (
-                                    <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs flex-shrink-0">
-                                      最新
-                                    </Badge>
-                                  )}
-                              </div>
+                              </button>
                             </div>
-                          </div>
+                          );
+                        })}
                         </div>
-                      );
-                    });
-                  })()}
-
-                  {(() => {
-                    const checkCommits = previewingNode
-                      ? commits.filter((c) => c.nodeId === previewingNode.id)
-                      : commits.filter((c) => !c.nodeId);
-
-                    return checkCommits.length === 0 && (
-                      <div className="text-center py-12">
-                        <p className="text-gray-500 text-sm">
-                          暂无提交记录
-                        </p>
                       </div>
                     );
                   })()}

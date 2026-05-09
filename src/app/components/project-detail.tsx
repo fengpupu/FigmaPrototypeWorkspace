@@ -59,7 +59,12 @@ interface ProjectMember {
 interface ProjectDetailProps {
   projectId: string;
   onBack: () => void;
-  onNavigateToWorkspace: (branchId: string, viewMode?: "edit" | "preview", nodeType?: "assembly" | "part") => void;
+  onNavigateToWorkspace: (
+    branchId: string,
+    viewMode?: "edit" | "preview",
+    nodeType?: "assembly" | "part",
+    context?: { nodeName?: string; nodePath?: string; assignee?: string },
+  ) => void;
   currentUser?: string;
 }
 
@@ -79,11 +84,12 @@ export function ProjectDetail({
     nodeName: string;
     nodePath: string;
   } | null>(null);
-  const [selectedNewMembers, setSelectedNewMembers] = useState<string[]>([]);
+  const [selectedNewMembers, setSelectedNewMembers] = useState<
+    Array<{ id: string; projectRole: "admin" | "member" }>
+  >([]);
   const [showCreateBranchDialog, setShowCreateBranchDialog] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
   const [newBranchAssignee, setNewBranchAssignee] = useState<string>("");
-  const [newMemberProjectRole, setNewMemberProjectRole] = useState<"admin" | "member">("member");
 
   // Mock project data
   const project = {
@@ -243,15 +249,26 @@ export function ProjectDetail({
   );
 
   const toggleNewMember = (memberId: string) => {
-    if (selectedNewMembers.includes(memberId)) {
-      setSelectedNewMembers(selectedNewMembers.filter((id) => id !== memberId));
+    if (selectedNewMembers.some((member) => member.id === memberId)) {
+      setSelectedNewMembers(selectedNewMembers.filter((member) => member.id !== memberId));
     } else {
-      setSelectedNewMembers([...selectedNewMembers, memberId]);
+      setSelectedNewMembers([...selectedNewMembers, { id: memberId, projectRole: "member" }]);
     }
   };
 
   const removeNewMember = (memberId: string) => {
-    setSelectedNewMembers(selectedNewMembers.filter((id) => id !== memberId));
+    setSelectedNewMembers(selectedNewMembers.filter((member) => member.id !== memberId));
+  };
+
+  const updateNewMemberRole = (
+    memberId: string,
+    projectRole: "admin" | "member",
+  ) => {
+    setSelectedNewMembers(
+      selectedNewMembers.map((member) =>
+        member.id === memberId ? { ...member, projectRole } : member,
+      ),
+    );
   };
 
   const handleAddMembers = () => {
@@ -260,13 +277,15 @@ export function ProjectDetail({
       return;
     }
 
-    const newMembers = allTeamMembers
-      .filter((m) => selectedNewMembers.includes(m.id))
-      .map((m) => ({ ...m, projectRole: newMemberProjectRole }));
+    const newMembers = selectedNewMembers
+      .map((selectedMember) => {
+        const member = allTeamMembers.find((m) => m.id === selectedMember.id);
+        return member ? { ...member, projectRole: selectedMember.projectRole } : null;
+      })
+      .filter((member): member is ProjectMember => Boolean(member));
 
     setMembers([...members, ...newMembers]);
     setSelectedNewMembers([]);
-    setNewMemberProjectRole("member");
     setShowAddMemberDialog(false);
   };
 
@@ -486,7 +505,11 @@ export function ProjectDetail({
                 onClick={(e) => {
                   e.stopPropagation();
                   if (node.hasCommits && node.branches[0]) {
-                    onNavigateToWorkspace(node.branches[0].branchId, "preview", node.type);
+                    onNavigateToWorkspace(node.branches[0].branchId, "preview", node.type, {
+                      nodeName: node.name,
+                      nodePath: getFullNodePath(assemblyTree, node.branches[0].branchId) || node.name,
+                      assignee: node.branches[0].assignee,
+                    });
                   }
                 }}
                 disabled={!node.hasCommits}
@@ -540,7 +563,11 @@ export function ProjectDetail({
                         size="sm"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onNavigateToWorkspace(branch.branchId, "edit", node.type);
+                          onNavigateToWorkspace(branch.branchId, "edit", node.type, {
+                            nodeName: node.name,
+                            nodePath: getFullNodePath(assemblyTree, branch.branchId) || node.name,
+                            assignee: branch.assignee,
+                          });
                         }}
                       >
                         <ExternalLink className="w-4 h-4 mr-1" />
@@ -613,7 +640,11 @@ export function ProjectDetail({
                 {currentBranch.assignee === currentUser && (
                   <Button
                     size="lg"
-                    onClick={() => onNavigateToWorkspace(currentBranch.branchId, "edit", branchNode.type)}
+                    onClick={() => onNavigateToWorkspace(currentBranch.branchId, "edit", branchNode.type, {
+                      nodeName: branchNode.name,
+                      nodePath: focusedBranch.nodePath,
+                      assignee: currentBranch.assignee,
+                    })}
                     className="bg-blue-600 hover:bg-blue-700"
                   >
                     <ExternalLink className="w-4 h-4 mr-2" />
@@ -630,7 +661,11 @@ export function ProjectDetail({
                   }`}
                   onClick={() => {
                     if (branchNode.hasCommits) {
-                      onNavigateToWorkspace(currentBranch.branchId, "preview", branchNode.type);
+                      onNavigateToWorkspace(currentBranch.branchId, "preview", branchNode.type, {
+                        nodeName: branchNode.name,
+                        nodePath: focusedBranch.nodePath,
+                        assignee: currentBranch.assignee,
+                      });
                     }
                   }}
                   disabled={!branchNode.hasCommits}
@@ -979,23 +1014,44 @@ export function ProjectDetail({
 
               {/* Selected Members */}
               {selectedNewMembers.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-3 p-3 bg-gray-50 rounded-lg">
-                  {selectedNewMembers.map((memberId) => {
-                    const member = allTeamMembers.find((m) => m.id === memberId);
+                <div className="space-y-2 mb-3 p-3 bg-gray-50 rounded-lg max-h-48 overflow-y-auto">
+                  {selectedNewMembers.map((selectedMember) => {
+                    const member = allTeamMembers.find((m) => m.id === selectedMember.id);
                     if (!member) return null;
                     return (
-                      <Badge
-                        key={memberId}
-                        className="bg-blue-100 text-blue-700 pl-3 pr-2 py-1"
+                      <div
+                        key={selectedMember.id}
+                        className="flex items-center gap-3 p-2 bg-white rounded border"
                       >
-                        {member.name}
-                        <button
-                          onClick={() => removeNewMember(memberId)}
-                          className="ml-2 hover:bg-blue-200 rounded-full p-0.5"
+                        <div className="flex-1">
+                          <div className="font-medium text-gray-900 text-sm">
+                            {member.name}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {member.email}
+                          </div>
+                        </div>
+                        <Select
+                          value={selectedMember.projectRole}
+                          onValueChange={(value: "admin" | "member") =>
+                            updateNewMemberRole(selectedMember.id, value)
+                          }
                         >
-                          <X className="w-3 h-3" />
+                          <SelectTrigger className="w-32">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="admin">管理员</SelectItem>
+                            <SelectItem value="member">普通成员</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <button
+                          onClick={() => removeNewMember(selectedMember.id)}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50 rounded p-1"
+                        >
+                          <X className="w-4 h-4" />
                         </button>
-                      </Badge>
+                      </div>
                     );
                   })}
                 </div>
@@ -1015,7 +1071,9 @@ export function ProjectDetail({
                       onClick={() => toggleNewMember(member.id)}
                     >
                       <Checkbox
-                        checked={selectedNewMembers.includes(member.id)}
+                        checked={selectedNewMembers.some(
+                          (selectedMember) => selectedMember.id === member.id,
+                        )}
                         onCheckedChange={() => toggleNewMember(member.id)}
                       />
                       <div className="flex-1">
@@ -1035,31 +1093,8 @@ export function ProjectDetail({
               )}
 
               <p className="text-sm text-gray-500">
-                已选择 {selectedNewMembers.length} 位成员
+                已选择 {selectedNewMembers.length} 位成员，可在上方为每位成员单独分配权限
               </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="project-role">项目权限</Label>
-              <Select value={newMemberProjectRole} onValueChange={(value: "admin" | "member") => setNewMemberProjectRole(value)}>
-                <SelectTrigger id="project-role">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">
-                    <div>
-                      <div className="font-medium">管理员</div>
-                      <div className="text-xs text-gray-500">可管理项目、成员和权限</div>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="member">
-                    <div>
-                      <div className="font-medium">普通成员</div>
-                      <div className="text-xs text-gray-500">仅可作为分支负责人参与项目</div>
-                    </div>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
             </div>
           </div>
 
@@ -1069,7 +1104,6 @@ export function ProjectDetail({
               onClick={() => {
                 setShowAddMemberDialog(false);
                 setSelectedNewMembers([]);
-                setNewMemberProjectRole("member");
               }}
             >
               取消

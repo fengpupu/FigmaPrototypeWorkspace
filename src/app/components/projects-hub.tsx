@@ -85,7 +85,7 @@ export function ProjectsHub({
     Array<{ id: string; projectRole: "admin" | "member" }>
   >([]);
   const [selectedNewMembers, setSelectedNewMembers] = useState<
-    string[]
+    Array<{ id: string; projectRole: "admin" | "member" }>
   >([]);
 
   // Mock team members data
@@ -210,18 +210,32 @@ export function ProjectsHub({
   };
 
   const toggleNewMember = (memberId: string) => {
-    if (selectedNewMembers.includes(memberId)) {
+    if (selectedNewMembers.some((member) => member.id === memberId)) {
       setSelectedNewMembers(
-        selectedNewMembers.filter((id) => id !== memberId),
+        selectedNewMembers.filter((member) => member.id !== memberId),
       );
     } else {
-      setSelectedNewMembers([...selectedNewMembers, memberId]);
+      setSelectedNewMembers([
+        ...selectedNewMembers,
+        { id: memberId, projectRole: "member" },
+      ]);
     }
   };
 
   const removeNewMember = (memberId: string) => {
     setSelectedNewMembers(
-      selectedNewMembers.filter((id) => id !== memberId),
+      selectedNewMembers.filter((member) => member.id !== memberId),
+    );
+  };
+
+  const updateNewMemberRole = (
+    memberId: string,
+    projectRole: "admin" | "member",
+  ) => {
+    setSelectedNewMembers(
+      selectedNewMembers.map((member) =>
+        member.id === memberId ? { ...member, projectRole } : member,
+      ),
     );
   };
 
@@ -725,27 +739,52 @@ export function ProjectsHub({
 
               {/* Selected Members */}
               {selectedNewMembers.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-3 p-3 bg-gray-50 rounded-lg">
-                  {selectedNewMembers.map((memberId) => {
+                <div className="space-y-2 mb-3 p-3 bg-gray-50 rounded-lg max-h-48 overflow-y-auto">
+                  {selectedNewMembers.map((selectedMember) => {
                     const member = teamMembers.find(
-                      (m) => m.id === memberId,
+                      (m) => m.id === selectedMember.id,
                     );
                     if (!member) return null;
                     return (
-                      <Badge
-                        key={memberId}
-                        className="bg-blue-100 text-blue-700 pl-3 pr-2 py-1"
+                      <div
+                        key={selectedMember.id}
+                        className="flex items-center gap-3 p-2 bg-white rounded border"
                       >
-                        {member.name}
+                        <div className="flex-1">
+                          <div className="font-medium text-gray-900 text-sm">
+                            {member.name}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {member.email}
+                          </div>
+                        </div>
+                        <Select
+                          value={selectedMember.projectRole}
+                          onValueChange={(value: "admin" | "member") =>
+                            updateNewMemberRole(selectedMember.id, value)
+                          }
+                        >
+                          <SelectTrigger className="w-32">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="admin">
+                              管理员
+                            </SelectItem>
+                            <SelectItem value="member">
+                              普通成员
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
                         <button
                           onClick={() =>
-                            removeNewMember(memberId)
+                            removeNewMember(selectedMember.id)
                           }
-                          className="ml-2 hover:bg-blue-200 rounded-full p-0.5"
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50 rounded p-1"
                         >
-                          <X className="w-3 h-3" />
+                          <X className="w-4 h-4" />
                         </button>
-                      </Badge>
+                      </div>
                     );
                   })}
                 </div>
@@ -760,8 +799,9 @@ export function ProjectsHub({
                     onClick={() => toggleNewMember(member.id)}
                   >
                     <Checkbox
-                      checked={selectedNewMembers.includes(
-                        member.id,
+                      checked={selectedNewMembers.some(
+                        (selectedMember) =>
+                          selectedMember.id === member.id,
                       )}
                       onCheckedChange={() =>
                         toggleNewMember(member.id)
@@ -783,7 +823,7 @@ export function ProjectsHub({
               </div>
 
               <p className="text-sm text-gray-500">
-                已选择 {selectedNewMembers.length} 位成员
+                已选择 {selectedNewMembers.length} 位成员，可在上方为每位成员单独分配权限
               </p>
             </div>
           </div>

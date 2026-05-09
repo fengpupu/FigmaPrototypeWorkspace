@@ -32,7 +32,12 @@ export interface SubtreeTask {
 }
 
 interface MyTasksProps {
-  onNavigateToWorkspace?: (branchId: string, viewMode?: "edit" | "preview", nodeType?: "assembly" | "part") => void;
+  onNavigateToWorkspace?: (
+    branchId: string,
+    viewMode?: "edit" | "preview",
+    nodeType?: "assembly" | "part",
+    context?: { nodeName?: string; nodePath?: string; assignee?: string },
+  ) => void;
   currentUser?: string;
 }
 
@@ -272,7 +277,11 @@ export function MyTasks({ onNavigateToWorkspace, currentUser = "张三" }: MyTas
           <Card
             key={task.id}
             className="p-6 hover:shadow-lg transition-shadow cursor-pointer"
-            onClick={() => onNavigateToWorkspace?.(task.branchId, "edit", task.nodeType)}
+            onClick={() => onNavigateToWorkspace?.(task.branchId, "edit", task.nodeType, {
+              nodeName: task.subtreeName,
+              nodePath: task.subtreePath,
+              assignee: task.assignee,
+            })}
           >
             <div className="flex items-start justify-between">
               <div className="flex-1">
