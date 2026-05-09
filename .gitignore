@@ -34,3 +34,7 @@ pnpm-debug.log*
 
 # Figma generated files
 __figma__entrypoint__.ts
+
+# Local preview entry files
+index.html
+src/main.tsx
