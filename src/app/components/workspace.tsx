@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   ArrowLeft,
+  ArrowLeftRight,
   Upload,
   FolderPlus,
   Save,
@@ -17,12 +18,11 @@ import {
   CheckCircle2,
   Package,
   FileText,
-  ChevronRight,
   FolderTree,
   Settings,
   ChevronDown,
-  RefreshCw,
   Eye,
+  Ruler,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
@@ -52,6 +52,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "./ui/context-menu";
 
 interface NodeBranch {
   branchId: string;
@@ -65,6 +71,7 @@ interface WorkspaceNode {
   type: "assembly" | "part";
   branches: NodeBranch[];
   hasCommits?: boolean;
+  adoptedCommitId?: string;
 }
 
 interface CommitRecord {
@@ -75,7 +82,7 @@ interface CommitRecord {
   filesChanged: number;
   nodeId?: string;
   branchId?: string;
-  parentIds?: string[]; // 父提交ID列表，支持合并提交
+  parentIds?: string[]; // 历史兼容字段，当前提交记录不展示合并关系
 }
 
 interface ChildSubmission {
@@ -148,6 +155,7 @@ export function Workspace({
     id: string;
     name: string;
   } | null>(null);
+  const [measurePanelOpen, setMeasurePanelOpen] = useState(false);
 
   // Mock workspace data - 根据branchId获取对应的工作区信息
   const workspace = {
@@ -159,6 +167,40 @@ export function Workspace({
     lastModified: "2024-03-20",
     hasUncommittedChanges: true,
   };
+
+  const metricSeed = (value: string) =>
+    value.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
+
+  const commitCode = (value: string) =>
+    metricSeed(value).toString(16).padStart(6, "0").slice(0, 6);
+
+  const getNodeKindLabel = (node: WorkspaceNode) =>
+    node.type === "assembly" ? "装配体节点" : "零件节点";
+
+  const getNodeTone = (node: WorkspaceNode) =>
+    node.type === "assembly"
+      ? "border-blue-500/45 bg-blue-500/10 text-blue-300"
+      : "border-emerald-500/45 bg-emerald-500/10 text-emerald-300";
+
+  const getAdoptedVersion = (node: WorkspaceNode) => {
+    const adoptedCommit = commits.find(
+      (commit) => commit.id === node.adoptedCommitId,
+    );
+    if (!node.hasCommits || !adoptedCommit) {
+      return "--";
+    }
+    return `${adoptedCommit.branchId || "负责分支"} / 提交 ${adoptedCommit.id}`;
+  };
+
+  const renderWorkspaceNodeThumb = (node: WorkspaceNode) => (
+    <span
+      className={`grid h-9 w-11 shrink-0 content-end gap-1 overflow-hidden rounded-lg border p-1.5 ${getNodeTone(node)}`}
+      aria-hidden="true"
+    >
+      <span className="h-1.5 w-7 rounded-full bg-current opacity-60" />
+      <span className="h-1.5 w-9 rounded-full bg-current opacity-35" />
+    </span>
+  );
 
   // Mock nodes
   const [nodes, setNodes] = useState<WorkspaceNode[]>([
@@ -174,6 +216,7 @@ export function Workspace({
         },
       ],
       hasCommits: true,
+      adoptedCommitId: "4-1",
     },
     {
       id: "2",
@@ -187,6 +230,7 @@ export function Workspace({
         },
       ],
       hasCommits: true,
+      adoptedCommitId: "5",
     },
     {
       id: "3",
@@ -205,6 +249,7 @@ export function Workspace({
         },
       ],
       hasCommits: true,
+      adoptedCommitId: "7",
     },
     {
       id: "4",
@@ -257,6 +302,16 @@ export function Workspace({
       author: "王五",
       date: "2024-03-19 16:45",
       filesChanged: 1,
+      nodeId: "1",
+      branchId: "branch-1-1-wangwu",
+      parentIds: [],
+    },
+    {
+      id: "4-1",
+      message: "补充气缸体水套腔筋位",
+      author: "王五",
+      date: "2024-03-18 15:20",
+      filesChanged: 2,
       nodeId: "1",
       branchId: "branch-1-1-wangwu",
       parentIds: [],
@@ -370,7 +425,7 @@ export function Workspace({
       date: "2024-03-25 14:00",
       filesChanged: 8,
       branchId: "main",
-      parentIds: ["13", "1"], // 合并提交：合并了branch-1-lisi
+      parentIds: ["13"],
     },
     {
       id: "13",
@@ -442,7 +497,7 @@ export function Workspace({
       date: "2024-03-22 09:00",
       filesChanged: 1,
       branchId: "branch-4-zhangsan",
-      parentIds: ["14"],
+      parentIds: ["11-4"],
     },
     {
       id: "21",
@@ -469,7 +524,7 @@ export function Workspace({
       date: "2024-03-21 08:00",
       filesChanged: 2,
       branchId: "branch-2-sunqi",
-      parentIds: ["14"],
+      parentIds: ["11"],
     },
   ]);
 
@@ -546,6 +601,39 @@ export function Workspace({
   const handleAssignNode = (node: WorkspaceNode) => {
     setSelectedNode(node);
     setShowAssignDialog(true);
+  };
+
+  const getNodeVersionCommits = (nodeId?: string) =>
+    commits
+      .filter((commit) => commit.nodeId === nodeId)
+      .sort(
+        (a, b) =>
+          new Date(b.date).getTime() - new Date(a.date).getTime(),
+      );
+
+  const getNodeNewCommitCount = (node: WorkspaceNode) => {
+    const versionCount = getNodeVersionCommits(node.id).length;
+    return Math.max(0, versionCount - 1);
+  };
+
+  const isNewNodeCommit = (
+    commit: CommitRecord,
+    node?: WorkspaceNode | null,
+  ) => {
+    if (!node) return false;
+    const versions = getNodeVersionCommits(node.id);
+    const newCount = Math.min(
+      getNodeNewCommitCount(node),
+      versions.length,
+    );
+    return versions.slice(0, newCount).some((item) => item.id === commit.id);
+  };
+
+  const isAdoptedNodeCommit = (
+    commit: CommitRecord,
+    node?: WorkspaceNode | null,
+  ) => {
+    return Boolean(node?.adoptedCommitId && commit.id === node.adoptedCommitId);
   };
 
   const modifiedCount = 0; // TODO: 实际应该统计有修改的节点数量
@@ -751,24 +839,32 @@ export function Workspace({
                       return (
                         <div key={node.id}>
                           {/* Node Item */}
-                          <div className="px-2 py-1.5 rounded hover:bg-gray-700/50 group">
-                            <div className="flex items-center gap-2">
-                              <ChevronRight className="w-3 h-3 text-gray-500 flex-shrink-0" />
-                              <div
-                                className={`w-5 h-5 rounded flex items-center justify-center text-xs font-medium flex-shrink-0 ${
-                                  node.type === "assembly"
-                                    ? "bg-purple-600 text-white"
-                                    : "bg-blue-600 text-white"
-                                }`}
-                              >
-                                {node.type === "assembly"
-                                  ? "装"
-                                  : "件"}
-                              </div>
-                              <span className="text-sm text-gray-300 flex-1 min-w-0 truncate">
+                          <div className="grid grid-cols-[16px_44px_minmax(0,1fr)_auto] gap-2 rounded px-2 py-2 hover:bg-gray-700/50 group">
+                            {node.type === "assembly" ? (
+                              <Package className="mt-3 h-3.5 w-3.5 flex-shrink-0 text-blue-300/70" />
+                            ) : (
+                              <FileText className="mt-3 h-3.5 w-3.5 flex-shrink-0 text-emerald-300/70" />
+                            )}
+                            {renderWorkspaceNodeThumb(node)}
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-medium text-gray-200">
                                 {node.name}
-                              </span>
-
+                              </div>
+                              <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-gray-500">
+                                <span>{getNodeKindLabel(node)}</span>
+                                <span>·</span>
+                                <span>{node.branches.length} 分支</span>
+                                <span>·</span>
+                                <span>新提交：{getNodeNewCommitCount(node)}</span>
+                              </div>
+                              <div className="mt-0.5 truncate text-xs text-gray-500">
+                                采纳版本：
+                                <span className="text-blue-300">
+                                  {getAdoptedVersion(node)}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex items-start gap-1">
                               <button
                                 className="h-6 px-1.5 flex items-center gap-0.5 text-gray-500 hover:text-gray-300 hover:bg-gray-700 rounded transition-colors flex-shrink-0"
                                 onClick={() => {
@@ -781,7 +877,7 @@ export function Workspace({
                                 }}
                                 title="切换版本"
                               >
-                                <RefreshCw className="w-3.5 h-3.5" />
+                                <ArrowLeftRight className="w-3.5 h-3.5" />
                               </button>
 
                               <Button
@@ -794,25 +890,6 @@ export function Workspace({
                               >
                                 <UserPlus className="w-3 h-3" />
                               </Button>
-                            </div>
-                            <div className="flex items-start gap-2 mt-1">
-                              <ChevronRight className="w-3 h-3 text-transparent flex-shrink-0" />
-                              <div className="w-5 h-5 flex-shrink-0" />
-                              <div className="text-xs text-gray-500 min-w-0">
-                                <div className="break-words">
-                                  当前版本：
-                                  {commits
-                                    .filter((c) => c.nodeId === node.id)
-                                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]?.message ||
-                                    "暂无版本"}
-                                </div>
-                                {node.branches.length > 0 && (
-                                  <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                                    <GitBranch className="w-3 h-3 flex-shrink-0" />
-                                    <span className="break-all">{node.branches[0].branchId} ({node.branches[0].assignee})</span>
-                                  </div>
-                                )}
-                              </div>
                             </div>
                           </div>
 
@@ -905,9 +982,20 @@ export function Workspace({
                   )}
 
                   {(() => {
+                    const previewVersionNode =
+                      previewingNode ||
+                      (viewMode === "preview"
+                        ? nodes.find(
+                            (node) =>
+                              node.name === workspace.nodeName ||
+                              node.branches.some(
+                                (branch) => branch.branchId === branchId,
+                              ),
+                          ) || null
+                        : null);
                     const filteredCommits = (
-                      previewingNode
-                        ? commits.filter((c) => c.nodeId === previewingNode.id)
+                      previewVersionNode
+                        ? commits.filter((c) => c.nodeId === previewVersionNode.id)
                         : commits.filter((c) => !c.nodeId)
                     ).sort(
                       (a, b) =>
@@ -921,6 +1009,103 @@ export function Workspace({
                           <p className="text-gray-500 text-sm">
                             暂无提交记录
                           </p>
+                        </div>
+                      );
+                    }
+
+                    if (viewMode === "preview" || previewingNode) {
+                      return (
+                        <div className="grid gap-2 pb-2">
+                          {filteredCommits.map((commit, index) => {
+                            const isCurrentVersion =
+                              selectedCommitVersion === commit.id ||
+                              (!selectedCommitVersion && index === 0);
+                            const showNewBadge =
+                              previewVersionNode
+                                ? isNewNodeCommit(commit, previewVersionNode)
+                                : index === 0;
+                            const showAdoptedBadge =
+                              previewVersionNode
+                                ? isAdoptedNodeCommit(
+                                    commit,
+                                    previewVersionNode,
+                                  )
+                                : index ===
+                                  Math.min(2, filteredCommits.length - 1);
+                            return (
+                              <ContextMenu key={commit.id}>
+                                <ContextMenuTrigger asChild>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedCommitVersion(commit.id);
+                                    }}
+                                    className={`w-full rounded-lg border p-3 text-left transition-colors ${
+                                      isCurrentVersion
+                                        ? "border-blue-500/60 bg-blue-500/15"
+                                        : "border-transparent bg-gray-700/45 hover:bg-gray-700"
+                                    }`}
+                                  >
+                                    <div className="mb-2 flex items-start justify-between gap-2">
+                                      <span
+                                        className="min-w-0 truncate text-sm font-medium text-gray-100"
+                                        title={commit.message}
+                                      >
+                                        {commit.message}
+                                      </span>
+                                      <span className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                                        {showNewBadge && (
+                                          <Badge className="bg-amber-500/15 text-amber-200">
+                                            新提交
+                                          </Badge>
+                                        )}
+                                        {showAdoptedBadge && (
+                                          <Badge className="bg-blue-500/15 text-blue-200">
+                                            采纳版本
+                                          </Badge>
+                                        )}
+                                        {false && isCurrentVersion && (
+                                          <Badge className="bg-blue-500/25 text-blue-100 border-blue-400/30">
+                                            当前所在
+                                          </Badge>
+                                        )}
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                                      <span>{commit.author}</span>
+                                      <span>·</span>
+                                      <span>{commit.date}</span>
+                                      <span>·</span>
+                                      <span>{commit.filesChanged} 个文件</span>
+                                      {commit.branchId && (
+                                        <>
+                                          <span>·</span>
+                                          <span className="flex items-center gap-1">
+                                            <GitBranch className="h-3 w-3" />
+                                            {commit.branchId}
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
+                                  </button>
+                                </ContextMenuTrigger>
+                                <ContextMenuContent className="min-w-48">
+                                  <ContextMenuItem
+                                    disabled={!commit.branchId}
+                                    onSelect={() => {
+                                      if (!commit.branchId) return;
+                                      alert(
+                                        `已基于版本 ${commit.message} 创建工作区`,
+                                      );
+                                    }}
+                                  >
+                                    <GitBranch className="h-4 w-4" />
+                                    基于此版本创建工作区
+                                  </ContextMenuItem>
+                                </ContextMenuContent>
+                              </ContextMenu>
+                            );
+                          })}
                         </div>
                       );
                     }
@@ -964,7 +1149,6 @@ export function Workspace({
                     const graphPadding = 10;
                     const laneGap = 10;
                     const strokeWidth = 1.25;
-                    const longEdgeLimit = rowHeight * 999;
                     const graphWidth = Math.max(
                       graphPadding * 2 + Math.max(nextColumn, 1) * laneGap,
                       82,
@@ -988,13 +1172,6 @@ export function Workspace({
 
                     return (
                       <div className="min-w-[320px] pb-2">
-                        <div className="mb-1 flex h-5 items-center justify-between border-b border-gray-700/70 px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-300">
-                          <span>Graph</span>
-                          <span className="font-normal normal-case tracking-normal text-gray-500">
-                            {filteredCommits.length} items
-                          </span>
-                        </div>
-
                         <div className="relative">
                         <svg
                           className="absolute left-0 top-0 pointer-events-none"
@@ -1004,102 +1181,75 @@ export function Workspace({
                           aria-hidden="true"
                         >
                           {filteredCommits.flatMap((commit, index) => {
-                            const parentIds = commit.parentIds ?? [];
+                            const nextIndex = filteredCommits.findIndex(
+                              (candidate, candidateIndex) =>
+                                candidateIndex > index &&
+                                getColumn(candidate) === getColumn(commit),
+                            );
+
+                            if (nextIndex === -1) return [];
+
+                            const x = getX(commit);
+
+                            return (
+                              <line
+                                key={`${commit.id}-${filteredCommits[nextIndex].id}`}
+                                x1={x}
+                                y1={getY(index) + 6}
+                                x2={x}
+                                y2={getY(nextIndex) - 6}
+                                stroke={getColor(commit)}
+                                strokeWidth={strokeWidth}
+                                strokeLinecap="round"
+                                strokeOpacity="0.72"
+                              />
+                            );
+                          })}
+                          {filteredCommits.flatMap((commit, index) => {
+                            const parentId = commit.parentIds?.[0];
+                            if (!parentId) return [];
+
+                            const parentIndex = commitIndexById.get(parentId);
+                            const parentCommit = commitById.get(parentId);
+
+                            if (
+                              parentIndex === undefined ||
+                              !parentCommit ||
+                              getColumn(parentCommit) === getColumn(commit) ||
+                              parentIndex <= index
+                            ) {
+                              return [];
+                            }
+
                             const currentX = getX(commit);
                             const currentY = getY(index);
+                            const parentX = getX(parentCommit);
+                            const parentY = getY(parentIndex);
+                            const midY = currentY + Math.min(
+                              Math.abs(parentY - currentY) * 0.35,
+                              rowHeight * 0.9,
+                            );
 
-                            return parentIds
-                              .map((parentId) => {
-                                const parentIndex =
-                                  commitIndexById.get(parentId);
-                                const parentCommit = commitById.get(parentId);
-
-                                if (
-                                  parentIndex === undefined ||
-                                  !parentCommit
-                                ) {
-                                  return null;
-                                }
-
-                                const parentX = getX(parentCommit);
-                                const parentY = getY(parentIndex);
-                                const color = getColor(commit);
-
-                                const distance = Math.abs(parentY - currentY);
-
-                                if (currentX === parentX) {
-                                  if (distance > longEdgeLimit) {
-                                    const segmentHeight = rowHeight * 0.45;
-
-                                    return (
-                                      <g key={`${commit.id}-${parentId}`}>
-                                        <line
-                                          x1={currentX}
-                                          y1={currentY + 8}
-                                          x2={currentX}
-                                          y2={currentY + segmentHeight}
-                                          stroke={color}
-                                          strokeWidth={strokeWidth}
-                                          strokeLinecap="round"
-                                          strokeOpacity="0.78"
-                                        />
-                                        <line
-                                          x1={parentX}
-                                          y1={parentY - segmentHeight}
-                                          x2={parentX}
-                                          y2={parentY - 8}
-                                          stroke={color}
-                                          strokeWidth={strokeWidth}
-                                          strokeLinecap="round"
-                                          strokeOpacity="0.78"
-                                        />
-                                      </g>
-                                    );
-                                  }
-
-                                  return (
-                                    <line
-                                      key={`${commit.id}-${parentId}`}
-                                      x1={currentX}
-                                      y1={currentY + 5}
-                                      x2={parentX}
-                                      y2={parentY - 5}
-                                      stroke={color}
-                                      strokeWidth={strokeWidth}
-                                      strokeLinecap="round"
-                                      strokeOpacity="0.78"
-                                    />
-                                  );
-                                }
-
-                                const midY =
-                                  currentY +
-                                  Math.min(distance * 0.42, rowHeight * 0.75);
-                                const elbowY = Math.min(
-                                  parentY - 5,
-                                  currentY + rowHeight * 0.95,
-                                );
-
-                                return (
-                                  <path
-                                    key={`${commit.id}-${parentId}`}
-                                    d={`M ${currentX} ${currentY + 5} C ${currentX} ${midY}, ${parentX} ${midY}, ${parentX} ${elbowY} L ${parentX} ${parentY - 5}`}
-                                    fill="none"
-                                    stroke={color}
-                                    strokeWidth={strokeWidth}
-                                    strokeLinecap="round"
-                                    strokeOpacity="0.68"
-                                  />
-                                );
-                              })
-                              .filter(Boolean);
+                            return (
+                              <path
+                                key={`fork-${parentId}-${commit.id}`}
+                                d={`M ${parentX} ${parentY - 6} C ${parentX} ${midY}, ${currentX} ${midY}, ${currentX} ${currentY + 6}`}
+                                fill="none"
+                                stroke={getColor(commit)}
+                                strokeWidth={strokeWidth}
+                                strokeLinecap="round"
+                                strokeOpacity="0.68"
+                              />
+                            );
                           })}
                         </svg>
 
                         {filteredCommits.map((commit, index) => {
+                          const isCurrentVersion =
+                            selectedCommitVersion === commit.id ||
+                            (!selectedCommitVersion && index === 0);
                           const isSelected = isSelectable
-                            ? selectedCommitVersion === commit.id ||
-                              (!selectedCommitVersion && index === 0)
+                            ? isCurrentVersion
                             : false;
                           const branchColor = getColor(commit);
                           const x = getX(commit);
@@ -1124,45 +1274,65 @@ export function Workspace({
                                 />
                               </div>
 
-                              <button
-                                type="button"
-                                disabled={!isSelectable}
-                                onClick={() => {
-                                  if (isSelectable) {
-                                    setSelectedCommitVersion(commit.id);
-                                  }
-                                }}
-                                className={`flex h-7 min-w-0 items-center gap-2 rounded-sm px-1.5 text-left transition-colors disabled:cursor-default ${
-                                  isSelected
-                                    ? "bg-gray-600/60 text-white"
-                                    : "text-gray-300 hover:bg-gray-700/45"
-                                }`}
-                              >
-                                <span
-                                  className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5"
-                                  title={commit.message}
-                                >
-                                  {commit.message}
-                                </span>
-                                <div
-                                  className={`flex shrink-0 items-center gap-1.5 text-[11px] leading-4 ${
-                                    isSelected
-                                      ? "text-gray-200"
-                                      : "text-gray-500"
-                                  }`}
-                                >
-                                  <span className="truncate">
-                                    {workspace.assignee} · {commit.date}
-                                  </span>
-                                  {index === 0 &&
-                                    !selectedCommitVersion &&
-                                    isSelectable && (
-                                      <Badge className="shrink-0 bg-blue-500/20 text-blue-300 border-blue-500/30 px-1.5 py-0 text-[10px]">
-                                        最新
-                                      </Badge>
-                                    )}
-                                </div>
-                              </button>
+                              <ContextMenu>
+                                <ContextMenuTrigger asChild>
+                                  <button
+                                    type="button"
+                                    aria-disabled={!isSelectable}
+                                    onClick={() => {
+                                      if (isSelectable) {
+                                        setSelectedCommitVersion(commit.id);
+                                      }
+                                    }}
+                                    className={`flex h-7 min-w-0 items-center gap-2 rounded-sm px-1.5 text-left transition-colors ${
+                                      isCurrentVersion
+                                        ? "bg-blue-500/20 text-white ring-1 ring-blue-400/30"
+                                        : "text-gray-300 hover:bg-blue-500/15 hover:text-white"
+                                    } ${
+                                      isSelectable
+                                        ? "cursor-pointer"
+                                        : "cursor-default"
+                                    }`}
+                                  >
+                                    <span
+                                      className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5"
+                                      title={commit.message}
+                                    >
+                                      {commit.message}
+                                    </span>
+                                    <div
+                                      className={`flex shrink-0 items-center gap-1.5 text-[11px] leading-4 ${
+                                        isCurrentVersion
+                                          ? "text-blue-100"
+                                          : "text-gray-500"
+                                      }`}
+                                    >
+                                      <span className="truncate">
+                                        {workspace.assignee} · {commit.date}
+                                      </span>
+                                      {isCurrentVersion && (
+                                        <Badge className="shrink-0 bg-blue-500/25 text-blue-100 border-blue-400/30 px-1.5 py-0 text-[10px]">
+                                          当前所在
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  </button>
+                                </ContextMenuTrigger>
+                                <ContextMenuContent className="min-w-48">
+                                  <ContextMenuItem
+                                    disabled={!commit.branchId}
+                                    onSelect={() => {
+                                      if (!commit.branchId) return;
+                                      alert(
+                                        `已基于版本 ${commit.message} 创建工作区`,
+                                      );
+                                    }}
+                                  >
+                                    <GitBranch className="h-4 w-4" />
+                                    基于此版本创建工作区
+                                  </ContextMenuItem>
+                                </ContextMenuContent>
+                              </ContextMenu>
                             </div>
                           );
                         })}
@@ -1177,7 +1347,7 @@ export function Workspace({
         )}
 
         {/* Center: 3D View / Canvas */}
-        <div className="flex-1 bg-gray-100 flex items-center justify-center">
+        <div className="relative flex-1 bg-gray-100 flex items-center justify-center">
           <div className="text-center">
             <div className="text-6xl mb-4">🔧</div>
             <p className="text-gray-600 text-lg font-medium">
@@ -1186,6 +1356,61 @@ export function Workspace({
             <p className="text-gray-500 text-sm mt-2">
               此处显示装配体的3D预览
             </p>
+          </div>
+          <div className="absolute bottom-5 right-5 z-10 flex flex-col items-end gap-2">
+            {measurePanelOpen && (
+              <div className="w-72 rounded-lg border border-slate-200 bg-white p-3 shadow-lg">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-md bg-blue-50 text-blue-600">
+                      <Ruler className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">
+                        测量
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        实时几何数据反馈
+                      </div>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-slate-500 hover:text-slate-900"
+                    onClick={() => setMeasurePanelOpen(false)}
+                  >
+                    收起
+                  </Button>
+                </div>
+                <div className="grid gap-2 text-sm">
+                  <div className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2">
+                    <span className="text-slate-500">距离</span>
+                    <span className="font-semibold text-slate-900">
+                      128.40 mm
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2">
+                    <span className="text-slate-500">角度</span>
+                    <span className="font-semibold text-slate-900">42.6°</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2">
+                    <span className="text-slate-500">半径</span>
+                    <span className="font-semibold text-slate-900">
+                      16.00 mm
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+            <Button
+              size="sm"
+              className="h-10 rounded-full bg-blue-600 px-4 text-white shadow-lg hover:bg-blue-700"
+              onClick={() => setMeasurePanelOpen((open) => !open)}
+            >
+              <Ruler className="mr-2 h-4 w-4" />
+              测量
+            </Button>
           </div>
         </div>
       </div>
@@ -1667,17 +1892,13 @@ export function Workspace({
             <div className="text-sm text-gray-400">
               当前版本：
               <span className="text-gray-200 ml-2">
-                {commits
-                  .filter((c) => c.nodeId === selectedNodeForVersionSwitch?.id)
-                  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]?.message || "暂无版本"}
+                {getNodeVersionCommits(selectedNodeForVersionSwitch?.id)[0]?.message || "暂无版本"}
               </span>
             </div>
           </div>
 
           <div className="space-y-2 py-4 px-6 max-h-96 overflow-y-auto">
-            {commits
-              .filter((commit) => commit.nodeId === selectedNodeForVersionSwitch?.id)
-              .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+            {getNodeVersionCommits(selectedNodeForVersionSwitch?.id)
               .map((commit) => (
                 <div
                   key={commit.id}
@@ -1686,13 +1907,29 @@ export function Workspace({
                     setShowVersionSwitchDialog(false);
                   }}
                 >
-                  <div className="text-sm font-medium text-gray-200 mb-2">
-                    {commit.message}
+                  <div className="mb-2 flex items-start justify-between gap-2">
+                    <div className="text-sm font-medium text-gray-200">
+                      {commit.message}
+                    </div>
+                    <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                      {isNewNodeCommit(commit, selectedNodeForVersionSwitch) && (
+                        <Badge className="bg-amber-500/15 text-amber-200">
+                          新提交
+                        </Badge>
+                      )}
+                      {isAdoptedNodeCommit(commit, selectedNodeForVersionSwitch) && (
+                        <Badge className="bg-blue-500/15 text-blue-200">
+                          采纳版本
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                   <div className="text-xs text-gray-400 flex items-center gap-2 flex-wrap">
                     <span>{commit.author}</span>
                     <span>·</span>
                     <span>{commit.date}</span>
+                    <span>·</span>
+                    <span>{commit.filesChanged} 个文件</span>
                     {commit.branchId && (
                       <div className="flex items-center gap-2">
                         <span>·</span>
@@ -1705,7 +1942,7 @@ export function Workspace({
                   </div>
                 </div>
               ))}
-            {commits.filter((commit) => commit.nodeId === selectedNodeForVersionSwitch?.id).length === 0 && (
+            {getNodeVersionCommits(selectedNodeForVersionSwitch?.id).length === 0 && (
               <div className="text-center py-8">
                 <p className="text-gray-500 text-sm">该节点暂无提交记录</p>
               </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type KeyboardEvent } from "react";
 import {
   ArrowLeft,
   Users,
@@ -10,6 +10,8 @@ import {
   X,
   Plus,
   Eye,
+  MessageSquare,
+  Send,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
@@ -56,6 +58,15 @@ interface ProjectMember {
   projectRole: "admin" | "member"; // 项目中的权限角色
 }
 
+interface BranchComment {
+  id: string;
+  author: string;
+  time: string;
+  content: string;
+  links?: Array<{ type: string; label: string }>;
+  replies?: BranchComment[];
+}
+
 interface ProjectDetailProps {
   projectId: string;
   onBack: () => void;
@@ -84,6 +95,9 @@ export function ProjectDetail({
     nodeName: string;
     nodePath: string;
   } | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [commentText, setCommentText] = useState("");
+  const [replyToCommentId, setReplyToCommentId] = useState<string | null>(null);
   const [selectedNewMembers, setSelectedNewMembers] = useState<
     Array<{ id: string; projectRole: "admin" | "member" }>
   >([]);
@@ -244,6 +258,58 @@ export function ProjectDetail({
   ];
 
   // 获取还未加入项目的成员
+  const [branchComments, setBranchComments] = useState<Record<string, BranchComment[]>>({
+    "branch-1-wangwu": [
+      {
+        id: "c-block-1",
+        author: "张三",
+        time: "今天 10:24",
+        content:
+          "轻量化路线的装配边界已经同步给制造侧，后续评审时重点看冷却回路和加强筋组。",
+        links: [
+          { type: "节点链接", label: "轻量化缸体" },
+          { type: "分支链接", label: "branch-1-wangwu" },
+        ],
+        replies: [
+          {
+            id: "r-block-1",
+            author: "王五",
+            time: "今天 10:42",
+            content: "收到，我会补一版散热桥的版本链接。",
+          },
+        ],
+      },
+      {
+        id: "c-block-2",
+        author: "李四",
+        time: "昨天 18:05",
+        content: "建议保留标准缸体路线的对比入口，方便确认父节点当前装配版本。",
+        links: [{ type: "节点版本链接", label: "缸体组件 v1.7.4" }],
+      },
+    ],
+    main: [
+      {
+        id: "c-root-1",
+        author: "赵六",
+        time: "今天 09:18",
+        content: "main 分支暂时作为装配基线，传感器座的新增提交先不合入。",
+        links: [
+          { type: "节点链接", label: "配气机构" },
+          { type: "提交链接", label: "提交 b71d4e" },
+        ],
+      },
+    ],
+    "branch-1-lisi": [
+      {
+        id: "c-left-1",
+        author: "李四",
+        time: "周三 16:30",
+        content: "标准缸体路线已经补齐水套腔和主油道的版本说明。",
+        links: [{ type: "节点版本链接", label: "缸体组件 v1.4.2" }],
+      },
+    ],
+  });
+
   const availableMembers = allTeamMembers.filter(
     (teamMember) => !members.some((m) => m.id === teamMember.id)
   );
@@ -697,8 +763,841 @@ export function ProjectDetail({
     );
   };
 
+  const getNodePathById = (
+    tree: TreeNode,
+    targetId: string,
+    path: TreeNode[] = [],
+  ): TreeNode[] | null => {
+    const nextPath = [...path, tree];
+    if (tree.id === targetId) return nextPath;
+    if (tree.children) {
+      for (const child of tree.children) {
+        const result = getNodePathById(child, targetId, nextPath);
+        if (result) return result;
+      }
+    }
+    return null;
+  };
+
+  const flattenNodes = (tree: TreeNode): TreeNode[] => [
+    tree,
+    ...(tree.children?.flatMap(flattenNodes) || []),
+  ];
+
+  const getNodeKindLabel = (node: TreeNode) =>
+    node.type === "assembly" ? "装配体" : "零件";
+
+  const getNodeMark = (node: TreeNode) =>
+    node.type === "assembly" ? "装" : "件";
+
+  const getNodeTone = (node: TreeNode) =>
+    node.type === "assembly"
+      ? "border-blue-200 bg-blue-50 text-blue-700"
+      : "border-emerald-200 bg-emerald-50 text-emerald-700";
+
+  const getNodeDescription = (node: TreeNode) =>
+    node.type === "assembly" ? "装配体节点" : "零件节点";
+
+  const metricSeed = (value: string) =>
+    value.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
+
+  const commitCode = (value: string) =>
+    metricSeed(value).toString(16).padStart(6, "0").slice(0, 6);
+
+  const getNodeMeta = (node: TreeNode, branch?: NodeBranch | null) => {
+    const seed = metricSeed(node.id);
+    // Adopted version means the version accepted by the parent node's last commit.
+    // It is tied to the parent-child relationship, not the currently viewed branch.
+    branch = node.branches[0] || null;
+    return {
+      parentVersion: `v1.${(seed % 8) + 1}.${(seed % 5) + 1} / 提交 ${commitCode(node.id)}`,
+      adoptedVersion: `${branch?.branchId || "负责分支"} / 提交 ${commitCode(`${node.id}-adopted`)}`,
+      newCommitCount: (seed % 4) + Math.max(0, node.branches.length - 1),
+    };
+  };
+
+  const getBranchDescription = (node: TreeNode, branch: NodeBranch) => {
+    const descriptions: Record<string, string> = {
+      main: "标准集成视图。",
+      "branch-root-lisi": "把热管理提前到一级结构里。",
+      "branch-root-wangwu": "加入预装工艺节点。",
+      "branch-1-lisi": "标准缸体路线，继续拆成左右缸体和孔位组。",
+      "branch-1-wangwu": "轻量化路线，子节点变成轻量化缸体、冷却回路和加强筋组。",
+      "branch-1-2-zhaoliu": "维持常规缸盖结构，后续补充接口细节。",
+      "branch-2-sunqi": "结构基本稳定，主要做细节收敛。",
+      "branch-3-zhaoliu": "维持常规结构，后续再补传感器座。",
+      "branch-4-zhangsan": "油底壳负责人分支，聚焦密封结构和安装边界。",
+    };
+
+    return descriptions[branch.branchId] || `${node.name} 的负责分支。`;
+  };
+
+  const getCommentsForBranch = (branchId?: string) =>
+    branchId ? branchComments[branchId] || [] : [];
+
+  const getBranchPathLabel = (branchId: string) =>
+    getFullNodePath(assemblyTree, branchId) || assemblyTree.name;
+
+  const selectNodeDefaultBranch = (node: TreeNode) => {
+    const defaultBranch =
+      node.branches.find((branch) => branch.branchId === "main") ||
+      node.branches[0];
+    if (defaultBranch) {
+      handleViewBranchDetail(
+        defaultBranch.branchId,
+        node.name,
+        getBranchPathLabel(defaultBranch.branchId),
+      );
+    }
+  };
+
+  const activeNode = focusedBranch
+    ? findNodeInTree(assemblyTree, focusedBranch.branchId) || assemblyTree
+    : assemblyTree;
+  const activeBranch =
+    activeNode.branches.find(
+      (branch) => branch.branchId === focusedBranch?.branchId,
+    ) ||
+    activeNode.branches[0] ||
+    null;
+  const activePath = getNodePathById(assemblyTree, activeNode.id) || [
+    assemblyTree,
+  ];
+  const siblingNodes =
+    activePath.length > 1
+      ? activePath[activePath.length - 2].children || []
+      : [assemblyTree];
+  const searchResults = searchQuery.trim()
+    ? flattenNodes(assemblyTree)
+        .flatMap((node) => {
+          const keyword = searchQuery.trim().toLowerCase();
+          const items: Array<{
+            type: "node" | "branch";
+            label: string;
+            detail: string;
+            node: TreeNode;
+            branch?: NodeBranch;
+          }> = [];
+
+          if (node.name.toLowerCase().includes(keyword)) {
+            items.push({
+              type: "node",
+              label: node.name,
+              detail: `${getNodeKindLabel(node)} · ${node.branches.length} 个分支`,
+              node,
+            });
+          }
+
+          node.branches.forEach((branch) => {
+            if (
+              branch.branchId.toLowerCase().includes(keyword) ||
+              branch.assignee.toLowerCase().includes(keyword)
+            ) {
+              items.push({
+                type: "branch",
+                label: branch.branchId,
+                detail: `${node.name} · 负责人：${branch.assignee}`,
+                node,
+                branch,
+              });
+            }
+          });
+
+          return items;
+        })
+        .slice(0, 8)
+    : [];
+
+  const renderNodeThumb = (node: TreeNode, compact = false) => (
+    <span
+      className={`grid shrink-0 content-end gap-1 overflow-hidden rounded-lg border p-1.5 ${getNodeTone(node)} ${
+        compact ? "h-9 w-11" : "h-14 w-[72px]"
+      }`}
+      aria-hidden="true"
+    >
+      <span className="h-1.5 w-7 rounded-full bg-current opacity-45" />
+      <span className="h-1.5 w-10 rounded-full bg-current opacity-25" />
+    </span>
+  );
+
+  const renderBranchThumb = (branch: NodeBranch) => (
+    <span
+      className="grid h-10 w-12 shrink-0 content-end gap-1 overflow-hidden rounded-lg border border-amber-200 bg-amber-50 p-1.5 text-amber-600"
+      aria-hidden="true"
+    >
+      <span className="h-1.5 w-8 rounded-full bg-current opacity-45" />
+      <span className="h-1.5 w-5 rounded-full bg-current opacity-25" />
+    </span>
+  );
+
+  const getBranchLatestVersion = (branch: NodeBranch) =>
+    `${branch.branchId} / 提交 ${commitCode(`${branch.branchId}-latest`)}`;
+
+  const renderNodeMeta = (node: TreeNode, branch?: NodeBranch | null) => (
+    <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-white/80 p-2 text-xs">
+      <div className="min-w-0">
+        <div className="text-slate-500">采纳版本</div>
+        <div className="truncate font-semibold text-blue-700">
+          {branch?.branchId || "暂无分支"}
+        </div>
+      </div>
+      <div className="min-w-0">
+        <div className="text-slate-500">负责人</div>
+        <div className="truncate font-semibold text-slate-700">
+          {branch?.assignee || "未分配"}
+        </div>
+      </div>
+      <div className="min-w-0">
+        <div className="text-slate-500">节点类型</div>
+        <div className="truncate font-semibold text-slate-700">
+          {getNodeKindLabel(node)}
+        </div>
+      </div>
+      <div className="min-w-0">
+        <div className="text-slate-500">新提交</div>
+        <div
+          className={`truncate font-semibold ${
+            node.hasCommits ? "text-amber-700" : "text-emerald-700"
+          }`}
+        >
+          {node.hasCommits ? "有更新" : "暂无"}
+        </div>
+      </div>
+    </div>
+  );
+
+  const nodeChipClass =
+    "inline-flex h-7 items-center rounded-md px-2 text-xs font-medium";
+
+  const renderNodeStatus = (
+    node: TreeNode,
+    align: "start" | "end" = "end",
+  ) => (
+    <div
+      className={`flex flex-wrap gap-1.5 ${
+        align === "start" ? "justify-start" : "justify-end"
+      }`}
+    >
+      {(() => {
+        const meta = getNodeMeta(node, node.branches[0]);
+        return (
+          <Badge
+            className={`${nodeChipClass} ${
+              meta.newCommitCount
+                ? "bg-amber-50 text-amber-700"
+                : "bg-emerald-50 text-emerald-700"
+            }`}
+          >
+            新提交：{meta.newCommitCount}
+          </Badge>
+        );
+      })()}
+      <Badge
+        className={`${nodeChipClass} ${
+          node.type === "assembly"
+            ? "bg-blue-50 text-blue-700"
+            : "bg-emerald-50 text-emerald-700"
+        }`}
+      >
+        {getNodeKindLabel(node)} · {node.branches.length} 分支
+      </Badge>
+    </div>
+  );
+
+  const renderAdoptedVersion = (node: TreeNode, branch?: NodeBranch | null) => (
+    node.id === assemblyTree.id ? null : (
+      <div className="mt-1 truncate text-xs text-slate-500">
+        采纳版本：
+        <span className="font-semibold text-blue-700">
+          {getNodeMeta(node, branch).adoptedVersion}
+        </span>
+      </div>
+    )
+  );
+
+  const renderNodeMetaV3 = (node: TreeNode, branch?: NodeBranch | null) => {
+    const meta = getNodeMeta(node, branch);
+    return (
+      <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-white/80 p-2 text-xs">
+        <div className="min-w-0">
+          <div className="text-slate-500">父节点版本</div>
+          <div className="truncate font-semibold text-slate-700">
+            {meta.parentVersion}
+          </div>
+        </div>
+        <div className="min-w-0">
+          <div className="text-slate-500">采纳版本</div>
+          <div className="truncate font-semibold text-blue-700">
+            {meta.adoptedVersion}
+          </div>
+        </div>
+        <div className="min-w-0">
+          <div className="text-slate-500">负责人</div>
+          <div className="truncate font-semibold text-slate-700">
+            {branch?.assignee || "未分配"}
+          </div>
+        </div>
+        <div className="min-w-0">
+          <div className="text-slate-500">新提交</div>
+          <div
+            className={`truncate font-semibold ${
+              meta.newCommitCount ? "text-amber-700" : "text-emerald-700"
+            }`}
+          >
+            {meta.newCommitCount}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderWorkspaceActions = (
+    node: TreeNode,
+    branch?: NodeBranch | null,
+    options: { showView?: boolean; showEdit?: boolean } = {},
+  ) => {
+    if (!branch) return null;
+    const { showView = true, showEdit = true } = options;
+    const nodePath = getBranchPathLabel(branch.branchId);
+    return (
+      <div className="flex flex-wrap justify-end gap-2">
+        {showView && (
+          <Button
+            variant="outline"
+            size="sm"
+            className={node.hasCommits ? "h-8" : "h-8 opacity-50"}
+            disabled={!node.hasCommits}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (node.hasCommits) {
+                onNavigateToWorkspace(branch.branchId, "preview", node.type, {
+                  nodeName: node.name,
+                  nodePath,
+                  assignee: branch.assignee,
+                });
+              }
+            }}
+          >
+            <Eye className="mr-1.5 h-3.5 w-3.5" />
+            查看
+          </Button>
+        )}
+        {showEdit && branch.assignee === currentUser && (
+          <Button
+            size="sm"
+            className="h-8 bg-blue-600 hover:bg-blue-700"
+            onClick={(event) => {
+              event.stopPropagation();
+              onNavigateToWorkspace(branch.branchId, "edit", node.type, {
+                nodeName: node.name,
+                nodePath,
+                assignee: branch.assignee,
+              });
+            }}
+          >
+            <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+            工作区
+          </Button>
+        )}
+      </div>
+    );
+  };
+
+  const handleSubmitComment = () => {
+    if (!activeBranch || !commentText.trim()) return;
+
+    const newComment: BranchComment = {
+      id: `c-${Date.now()}`,
+      author: currentUser,
+      time: "刚刚",
+      content: commentText.trim(),
+    };
+
+    setBranchComments((current) => {
+      const existing = current[activeBranch.branchId] || [];
+      if (replyToCommentId) {
+        return {
+          ...current,
+          [activeBranch.branchId]: existing.map((comment) =>
+            comment.id === replyToCommentId
+              ? {
+                  ...comment,
+                  replies: [...(comment.replies || []), newComment],
+                }
+              : comment,
+          ),
+        };
+      }
+
+      return {
+        ...current,
+        [activeBranch.branchId]: [newComment, ...existing],
+      };
+    });
+    setCommentText("");
+    setReplyToCommentId(null);
+  };
+
+  const handleCardKeyDown = (
+    event: KeyboardEvent<HTMLElement>,
+    action: () => void,
+  ) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      action();
+    }
+  };
+
+  const renderCommentCard = (comment: BranchComment, nested = false) => (
+    <article
+      key={comment.id}
+      className={`grid gap-2 rounded-lg border border-slate-200 bg-white p-3 ${
+        nested ? "ml-3 border-l-2 border-l-slate-300" : ""
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+        <span className="font-semibold text-slate-900">{comment.author}</span>
+        <span>{comment.time}</span>
+      </div>
+      <p className="text-sm leading-6 text-slate-700">{comment.content}</p>
+      {comment.links?.length ? (
+        <div className="flex flex-wrap gap-1.5">
+          {comment.links.map((link) => (
+            <Badge
+              key={`${comment.id}-${link.type}-${link.label}`}
+              className="bg-blue-50 text-blue-700"
+            >
+              {link.type}：{link.label}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
+      {!nested && (
+        <div className="flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => {
+              setReplyToCommentId(comment.id);
+              setCommentText(`回复 @${comment.author}：`);
+            }}
+          >
+            回复
+          </Button>
+        </div>
+      )}
+      {comment.replies?.length ? (
+        <div className="grid gap-2">
+          {comment.replies.map((reply) => renderCommentCard(reply, true))}
+        </div>
+      ) : null}
+    </article>
+  );
+
   return (
-    <div className="p-8">
+    <div className="grid h-screen grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-8">
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <Button variant="ghost" onClick={onBack} className="mb-4">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            返回项目大厅
+          </Button>
+          <h1 className="mb-2 text-3xl font-bold text-slate-950">
+            {project.name}
+          </h1>
+          <p className="text-slate-600">{project.description}</p>
+          <div className="mt-2 flex items-center gap-4 text-sm text-slate-500">
+            <span>创建者：{project.createdBy}</span>
+            <span>创建时间：{project.createdAt}</span>
+          </div>
+        </div>
+
+        <div className="flex gap-3">
+          <Button variant="outline" onClick={() => setShowMembersDialog(true)}>
+            <Users className="mr-2 h-4 w-4" />
+            项目成员 ({members.length})
+          </Button>
+          {isProjectAdmin && (
+            <Button onClick={() => setShowAddMemberDialog(true)}>
+              <UserPlus className="mr-2 h-4 w-4" />
+              添加成员
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <section className="grid min-h-0 grid-cols-[250px_minmax(0,1fr)] gap-4 overflow-hidden">
+        <aside className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 bg-slate-50 p-4">
+            <h2 className="mb-1 text-[17px] font-semibold text-slate-900">
+              搜索定位
+            </h2>
+          </div>
+          <div className="min-h-0 overflow-auto p-3">
+            <div className="grid gap-2 rounded-lg border border-slate-200 bg-white p-3">
+              <Input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="搜索节点名称或分支名称"
+                className="h-9"
+              />
+              <div className="grid gap-1.5">
+                {searchQuery.trim() ? (
+                  searchResults.length ? (
+                    searchResults.map((item) => (
+                      <button
+                        key={`${item.type}-${item.label}-${item.node.id}`}
+                        type="button"
+                        onClick={() => {
+                          if (item.branch) {
+                            handleViewBranchDetail(
+                              item.branch.branchId,
+                              item.node.name,
+                              getBranchPathLabel(item.branch.branchId),
+                            );
+                          } else {
+                            selectNodeDefaultBranch(item.node);
+                          }
+                          setSearchQuery("");
+                        }}
+                        className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-left transition-colors hover:border-blue-300 hover:bg-blue-50"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-semibold text-slate-900">
+                            {item.label}
+                          </span>
+                          <span className="block truncate text-xs text-slate-500">
+                            {item.detail}
+                          </span>
+                        </span>
+                        <Badge className={item.type === "branch" ? "bg-amber-50 text-amber-700" : "bg-blue-50 text-blue-700"}>
+                          {item.type === "branch" ? "分支" : "节点"}
+                        </Badge>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-slate-200 p-3 text-sm text-slate-500">
+                      未找到匹配的节点或分支。
+                    </div>
+                  )
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-200 p-3 text-sm leading-6 text-slate-500">
+                    输入节点名称、分支名称或负责人后展示匹配结果。
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-4 overflow-hidden">
+          <div className="flex min-h-16 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 shadow-sm">
+            <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-500">
+              <span>{project.name}</span>
+              {activePath.map((node, index) => {
+                const branch = node.branches.find(
+                  (item) =>
+                    index === activePath.length - 1
+                      ? item.branchId === activeBranch?.branchId
+                      : item.branchId === "main",
+                ) || node.branches[0];
+                const isLast = index === activePath.length - 1;
+
+                return (
+                  <div key={node.id} className="flex items-center gap-2">
+                    <ChevronRight className="h-4 w-4 text-slate-400" />
+                    <button
+                      type="button"
+                      onClick={() => branch && handleViewBranchDetail(branch.branchId, node.name, getBranchPathLabel(branch.branchId))}
+                      className={`rounded-lg border px-3 py-1.5 transition-colors ${
+                        isLast
+                          ? "border-blue-200 bg-blue-50 font-semibold text-blue-700"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:text-blue-700"
+                      }`}
+                    >
+                      {node.name}
+                      {branch ? ` / ${branch.branchId}` : ""}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <section className="grid min-h-0 grid-cols-[400px_350px_minmax(360px,1fr)] gap-4 overflow-hidden">
+            <aside className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-200 bg-slate-50 p-4">
+                <h2 className="mb-1 text-[17px] font-semibold text-slate-900">
+                  导航上下文
+                </h2>
+              </div>
+              <div className="min-h-0 overflow-auto p-3">
+                <div className="mb-3 grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-3">
+                    {renderNodeThumb(activeNode)}
+                    <div className="min-w-0">
+                      <div className="mb-1 grid gap-1">
+                        <div className="min-w-0">
+                          <h3 className="truncate text-lg font-semibold text-slate-950">
+                            {activeNode.name}
+                          </h3>
+                        </div>
+                        {renderNodeStatus(activeNode, "start")}
+                      </div>
+                      {renderAdoptedVersion(activeNode, activeBranch)}
+                      <div className="mt-3 flex justify-end">
+                        {renderWorkspaceActions(activeNode, activeBranch, {
+                          showEdit: false,
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <h3 className="mb-2 text-sm font-semibold text-slate-700">
+                    同级节点
+                  </h3>
+                  <div className="grid gap-2">
+                    {siblingNodes.map((node) => {
+                      const branch =
+                        node.branches.find((item) => item.branchId === "main") ||
+                        node.branches[0];
+                      const isActive = node.id === activeNode.id;
+                      return (
+                        <div
+                          key={node.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => selectNodeDefaultBranch(node)}
+                          onKeyDown={(event) =>
+                            handleCardKeyDown(event, () =>
+                              selectNodeDefaultBranch(node),
+                            )
+                          }
+                          className={`grid grid-cols-[44px_minmax(0,1fr)] gap-2 rounded-lg border p-2 text-left transition ${
+                            isActive
+                              ? "border-blue-300 bg-blue-50"
+                              : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                          }`}
+                        >
+                          {renderNodeThumb(node, true)}
+                          <span className="min-w-0">
+                            <span className="grid gap-1">
+                              <span className="min-w-0">
+                                <span className="block truncate text-sm font-semibold text-slate-900">
+                                  {node.name}
+                                </span>
+                              </span>
+                              {renderNodeStatus(node, "start")}
+                            </span>
+                            {renderAdoptedVersion(node, branch)}
+                            <span className="mt-2 flex justify-end">
+                              {renderWorkspaceActions(node, branch, {
+                                showEdit: false,
+                              })}
+                            </span>
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+              </div>
+            </aside>
+
+            <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-200 bg-slate-50 p-4">
+                <h2 className="mb-1 text-[17px] font-semibold text-slate-900">
+                  {activeNode.name}的分支
+                </h2>
+              </div>
+              <div className="min-h-0 overflow-auto p-3">
+                <div className="grid gap-2">
+                  {activeNode.branches.length ? (
+                    activeNode.branches.map((branch) => {
+                      const isActive = branch.branchId === activeBranch?.branchId;
+                      return (
+                        <div
+                          key={branch.branchId}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() =>
+                            handleViewBranchDetail(
+                              branch.branchId,
+                              activeNode.name,
+                              getBranchPathLabel(branch.branchId),
+                            )
+                          }
+                          onKeyDown={(event) =>
+                            handleCardKeyDown(event, () =>
+                              handleViewBranchDetail(
+                                branch.branchId,
+                                activeNode.name,
+                                getBranchPathLabel(branch.branchId),
+                              ),
+                            )
+                          }
+                          className={`grid gap-3 rounded-lg border p-3 text-left transition ${
+                            isActive
+                              ? "border-blue-300 bg-blue-50"
+                              : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                          }`}
+                        >
+                          <span className="grid grid-cols-[44px_minmax(0,1fr)_auto] items-start gap-3">
+                            {renderBranchThumb(branch)}
+                            <span className="min-w-0">
+                              <span className="block truncate text-base font-semibold text-slate-950">
+                                {branch.branchId}
+                              </span>
+                            </span>
+                            <Badge className={`${nodeChipClass} bg-amber-50 text-amber-700`}>
+                              留言：{getCommentsForBranch(branch.branchId).length}
+                            </Badge>
+                          </span>
+                          <span className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-700">
+                            <span>负责人：{branch.assignee}</span>
+                            <span className="text-blue-700">
+                              子节点：{activeNode.children?.length || 0}
+                            </span>
+                          </span>
+                          <div className="truncate text-xs text-slate-500">
+                            最新提交版本：
+                            <span className="font-semibold text-blue-700">
+                              {getBranchLatestVersion(branch)}
+                            </span>
+                          </div>
+                          {renderWorkspaceActions(activeNode, branch, {
+                            showView: false,
+                          })}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-slate-200 p-4 text-sm leading-6 text-slate-500">
+                      当前节点暂无负责分支。
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
+
+            <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-200 bg-slate-50 p-4">
+                <h2 className="mb-1 text-[17px] font-semibold text-slate-900">
+                  {activeBranch ? `${activeBranch.branchId} 下的子节点` : `${activeNode.name}的详情`}
+                </h2>
+              </div>
+              <div className="min-h-0 overflow-auto p-3">
+                <div className="grid gap-2">
+                  {activeNode.children?.length ? (
+                    activeNode.children.map((child) => {
+                      const branch =
+                        child.branches.find((item) => item.branchId === "main") ||
+                        child.branches[0];
+                      return (
+                        <div
+                          key={child.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => selectNodeDefaultBranch(child)}
+                          onKeyDown={(event) =>
+                            handleCardKeyDown(event, () =>
+                              selectNodeDefaultBranch(child),
+                            )
+                          }
+                          className="grid grid-cols-[44px_minmax(0,1fr)] gap-3 rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
+                        >
+                          {renderNodeThumb(child, true)}
+                          <span className="min-w-0">
+                            <span className="grid gap-1">
+                              <span>
+                                <span className="block truncate text-base font-semibold text-slate-950">
+                                  {child.name}
+                                </span>
+                              </span>
+                              {renderNodeStatus(child, "start")}
+                            </span>
+                            <span className="mt-2 block">
+                              {renderAdoptedVersion(child, branch)}
+                            </span>
+                            <span className="mt-2 block">
+                              {renderWorkspaceActions(child, branch, {
+                                showEdit: false,
+                              })}
+                            </span>
+                          </span>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-slate-200 p-4 text-sm leading-6 text-slate-500">
+                      当前节点没有下级节点，但仍可以维护自己的负责分支。
+                    </div>
+                  )}
+                </div>
+
+                <section className="mt-4 grid gap-3 border-t border-slate-200 pt-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="flex items-center gap-2 text-[15px] font-semibold text-slate-900">
+                      <MessageSquare className="h-4 w-4 text-slate-500" />
+                      分支留言
+                    </h3>
+                    <Badge className="bg-slate-100 text-slate-700">
+                      {activeBranch
+                        ? `${activeBranch.branchId} · ${getCommentsForBranch(activeBranch.branchId).length} 条`
+                        : "暂无分支"}
+                    </Badge>
+                  </div>
+
+                  <div className="grid gap-2">
+                    {activeBranch && getCommentsForBranch(activeBranch.branchId).length ? (
+                      getCommentsForBranch(activeBranch.branchId).map((comment) =>
+                        renderCommentCard(comment),
+                      )
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-slate-200 p-4 text-sm leading-6 text-slate-500">
+                        当前分支还没有留言，可以先记录评审意见或补充链接。
+                      </div>
+                    )}
+                  </div>
+
+                </section>
+              </div>
+              <div className="border-t border-slate-200 bg-white p-3">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
+                  <Input
+                    value={commentText}
+                    onChange={(event) => setCommentText(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        handleSubmitComment();
+                      }
+                    }}
+                    placeholder={replyToCommentId ? "输入回复" : "输入评论"}
+                    disabled={!activeBranch}
+                    className="h-9 border-0 bg-transparent shadow-none focus-visible:ring-0"
+                  />
+                  <Button
+                    size="sm"
+                    className="h-9 bg-blue-600 hover:bg-blue-700"
+                    disabled={!activeBranch || !commentText.trim()}
+                    onClick={handleSubmitComment}
+                  >
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </section>
+          </section>
+        </section>
+      </section>
+
+      {false && (
+        <>
       {/* Header */}
       <div className="mb-6">
         <Button variant="ghost" onClick={onBack} className="mb-4">
@@ -818,6 +1717,8 @@ export function ProjectDetail({
 
         {renderBranchDetailView()}
       </Card>
+        </>
+      )}
 
       {/* Members Dialog */}
       <Dialog open={showMembersDialog} onOpenChange={setShowMembersDialog}>

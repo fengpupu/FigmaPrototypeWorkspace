@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Search,
   ChevronRight,
@@ -43,6 +43,8 @@ interface MyTasksProps {
 
 export function MyTasks({ onNavigateToWorkspace, currentUser = "张三" }: MyTasksProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 5;
 
   // Mock subtree tasks data - 我负责的子树分支
   const [tasks] = useState<SubtreeTask[]>([
@@ -248,9 +250,22 @@ export function MyTasks({ onNavigateToWorkspace, currentUser = "张三" }: MyTas
 
     return matchesUser && matchesSearch;
   });
+  const totalPages = Math.max(1, Math.ceil(filteredTasks.length / pageSize));
+  const pageTasks = filteredTasks.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, currentUser]);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
 
   return (
-    <div className="p-8">
+    <div className="grid h-screen grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden p-8">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">我的任务</h1>
@@ -272,11 +287,22 @@ export function MyTasks({ onNavigateToWorkspace, currentUser = "张三" }: MyTas
       </div>
 
       {/* Subtree Tasks List */}
-      <div className="space-y-4">
-        {filteredTasks.map((task) => (
+      <div className="min-h-0 space-y-3 overflow-y-auto pr-2">
+        {filteredTasks.length === 0 && (
+          <div className="text-center py-12">
+            <FolderTree className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
+              没有找到子树
+            </h3>
+            <p className="text-gray-600">
+              {searchQuery ? "尝试调整筛选条件" : "您目前没有子树"}
+            </p>
+          </div>
+        )}
+        {pageTasks.map((task) => (
           <Card
             key={task.id}
-            className="p-6 hover:shadow-lg transition-shadow cursor-pointer"
+            className="p-5 hover:shadow-lg transition-shadow cursor-pointer"
             onClick={() => onNavigateToWorkspace?.(task.branchId, "edit", task.nodeType, {
               nodeName: task.subtreeName,
               nodePath: task.subtreePath,
@@ -337,17 +363,44 @@ export function MyTasks({ onNavigateToWorkspace, currentUser = "张三" }: MyTas
         ))}
       </div>
 
-      {filteredTasks.length === 0 && (
-        <div className="text-center py-12">
-          <FolderTree className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">
-            没有找到子树
-          </h3>
-          <p className="text-gray-600">
-            {searchQuery
-              ? "尝试调整筛选条件"
-              : "您目前没有子树"}
-          </p>
+      {filteredTasks.length > 0 && (
+        <div className="mt-4 flex items-center justify-between border-t bg-gray-50 pt-4">
+          <div className="text-sm text-gray-500">
+            共 {filteredTasks.length} 条，当前第 {currentPage} / {totalPages} 页
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+            >
+              上一页
+            </Button>
+            {Array.from({ length: totalPages }, (_, index) => index + 1).map(
+              (page) => (
+                <Button
+                  key={page}
+                  variant={page === currentPage ? "default" : "outline"}
+                  size="sm"
+                  className="min-w-9"
+                  onClick={() => setCurrentPage(page)}
+                >
+                  {page}
+                </Button>
+              ),
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage === totalPages}
+              onClick={() =>
+                setCurrentPage((page) => Math.min(totalPages, page + 1))
+              }
+            >
+              下一页
+            </Button>
+          </div>
         </div>
       )}
     </div>
