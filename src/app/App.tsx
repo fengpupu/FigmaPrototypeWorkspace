@@ -52,7 +52,7 @@ export default function App() {
   const allNavItems = [
     {
       id: "projects" as const,
-      label: "项目大厅",
+      label: "项目大厅1",
       icon: FolderTree,
       roles: ["admin", "user"],
     },
