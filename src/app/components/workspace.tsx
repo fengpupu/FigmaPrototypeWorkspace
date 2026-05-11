@@ -12,6 +12,7 @@ import {
   Download,
   ExternalLink,
   History,
+  MessageCircle,
   GitBranch,
   GitBranchPlus,
   AlertCircle,
@@ -23,6 +24,8 @@ import {
   ChevronDown,
   Eye,
   Ruler,
+  Send,
+  Tag,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
@@ -95,6 +98,15 @@ interface ChildSubmission {
   filesChanged: number;
 }
 
+interface WorkspaceComment {
+  id: string;
+  branchId: string;
+  author: string;
+  time: string;
+  content: string;
+  tag?: string;
+}
+
 interface WorkspaceProps {
   branchId: string;
   onBack: () => void;
@@ -145,10 +157,31 @@ export function Workspace({
   >("empty");
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [leftPanelTab, setLeftPanelTab] = useState<
-    "structure" | "history"
+    "structure" | "history" | "comments"
   >(viewMode === "preview" || nodeType === "part" ? "history" : "structure");
   const [selectedCommitVersion, setSelectedCommitVersion] =
     useState<string | null>(null);
+  const [commentText, setCommentText] = useState("");
+  const [workspaceComments, setWorkspaceComments] = useState<
+    WorkspaceComment[]
+  >(() => [
+    {
+      id: "comment-1",
+      branchId,
+      author: currentUser,
+      time: "今天 09:18",
+      content: "确认当前分支的装配约束已经补齐，可以继续同步到下一轮提交。",
+      tag: "提交链接：提交 b71d4e",
+    },
+    {
+      id: "comment-2",
+      branchId,
+      author: "李四",
+      time: "周三 16:30",
+      content: "标准缸体路线已经补齐水套腔和主油道的版本说明。",
+      tag: "节点版本链接：气缸体组件 v1.4.2",
+    },
+  ]);
   const [selectedAsset, setSelectedAsset] = useState<
     string | null
   >(null);
@@ -600,6 +633,29 @@ export function Workspace({
     setShowAdoptDialog(true);
   };
 
+  const currentBranchComments = workspaceComments.filter(
+    (comment) => comment.branchId === branchId,
+  );
+
+  const handleAddWorkspaceComment = () => {
+    const content = commentText.trim();
+    if (!content) {
+      return;
+    }
+
+    setWorkspaceComments((comments) => [
+      {
+        id: `comment-${Date.now()}`,
+        branchId,
+        author: currentUser,
+        time: "刚刚",
+        content,
+      },
+      ...comments,
+    ]);
+    setCommentText("");
+  };
+
   const handleAssignNode = (node: WorkspaceNode) => {
     setSelectedNode(node);
     setAssignBranchName("");
@@ -812,6 +868,20 @@ export function Workspace({
           >
             <History className="w-5 h-5" />
           </button>
+          <button
+            onClick={() => {
+              setLeftPanelTab("comments");
+              setLeftPanelOpen(true);
+            }}
+            className={`w-9 h-9 flex items-center justify-center rounded ${
+              leftPanelOpen && leftPanelTab === "comments"
+                ? "bg-blue-600 text-white"
+                : "text-gray-400 hover:text-white hover:bg-gray-700"
+            }`}
+            title="留言"
+          >
+            <MessageCircle className="w-5 h-5" />
+          </button>
           <div className="flex-1" />
           {viewMode === "edit" && (
             <button
@@ -834,6 +904,7 @@ export function Workspace({
                   (viewMode === "preview"
                     ? "版本历史"
                     : "提交记录")}
+                {leftPanelTab === "comments" && "留言"}
               </h3>
             </div>
 
@@ -1395,6 +1466,133 @@ export function Workspace({
                       </div>
                     );
                   })()}
+                </div>
+              )}
+
+              {leftPanelTab === "comments" && (
+                <div className="flex min-h-full flex-col">
+                  <div className="hidden">
+                    <div className="mb-1 text-xs text-blue-300">
+                      {workspace.nodeName}
+                    </div>
+                    <div className="truncate text-sm font-medium text-white">
+                      {workspace.branchId}
+                    </div>
+                    <div className="mt-1 text-xs text-gray-400">
+                      分支留言 · {currentBranchComments.length} 条
+                    </div>
+                  </div>
+
+                  <div className="hidden">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 border-gray-600 bg-gray-700 text-gray-200 hover:bg-gray-600"
+                    >
+                      <MessageCircle className="mr-2 h-3.5 w-3.5" />
+                      全部
+                    </Button>
+                    <span className="text-xs text-gray-500">
+                      仅当前分支
+                    </span>
+                  </div>
+
+                  <div className="flex-1 space-y-3">
+                    {currentBranchComments.length > 0 ? (
+                      currentBranchComments.map((comment) => (
+                        <div
+                          key={comment.id}
+                          className="rounded-lg border border-gray-700 bg-gray-700/45 p-3"
+                        >
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-xs font-medium text-white">
+                                {comment.author.slice(0, 1)}
+                              </span>
+                              <div>
+                                <div className="text-sm font-medium text-gray-100">
+                                  {comment.author}
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  {comment.time}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          <p className="text-sm leading-6 text-gray-200">
+                            {comment.content}
+                          </p>
+                          {comment.tag && (
+                            <div className="mt-2 inline-flex max-w-full items-center gap-1 rounded bg-blue-500/15 px-2 py-1 text-xs text-blue-200">
+                              <Tag className="h-3 w-3 shrink-0" />
+                              <span className="truncate">{comment.tag}</span>
+                            </div>
+                          )}
+                          <div className="mt-3 flex justify-end">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs text-gray-300 hover:bg-gray-600 hover:text-white"
+                              onClick={() =>
+                                setCommentText(`回复 @${comment.author}：`)
+                              }
+                            >
+                              回复
+                            </Button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-gray-700 p-5 text-center text-sm text-gray-500">
+                        当前分支暂无留言
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="sticky bottom-0 -mx-4 mt-3 border-t border-gray-700 bg-gray-800 px-4 py-3 relative">
+                    <Textarea
+                      value={commentText}
+                      onChange={(event) => setCommentText(event.target.value)}
+                      placeholder="输入留言"
+                      rows={1}
+                      className="h-11 min-h-0 resize-none border-gray-600 bg-gray-700 py-2.5 pr-14 text-gray-100 placeholder:text-gray-500"
+                    />
+                    <div className="absolute right-6 top-4 flex items-center justify-end">
+                      <div className="hidden">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 w-8 border-gray-600 bg-gray-700 p-0 text-gray-300 hover:bg-gray-600"
+                          title="添加标签"
+                        >
+                          <Tag className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 w-8 border-gray-600 bg-gray-700 p-0 text-gray-300 hover:bg-gray-600"
+                          title="添加图片"
+                        >
+                          <MessageCircle className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-9 w-9 p-0 bg-blue-600 text-[0px] text-white hover:bg-blue-700 [&_span]:hidden"
+                        disabled={!commentText.trim()}
+                        onClick={handleAddWorkspaceComment}
+                        title="发送"
+                      >
+                        <Send className="h-4 w-4" />
+                        <span className="text-sm">回复</span>
+                        发送
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

@@ -849,6 +849,18 @@ export function ProjectDetail({
   const getCommentsForBranch = (branchId?: string) =>
     branchId ? branchComments[branchId] || [] : [];
 
+  const flattenBranchComments = (comments: BranchComment[]) =>
+    comments.flatMap((comment) => [
+      { ...comment, replies: [] },
+      ...(comment.replies || []).map((reply) => ({
+        ...reply,
+        replies: [],
+      })),
+    ]);
+
+  const getVisibleCommentsForBranch = (branchId?: string) =>
+    flattenBranchComments(getCommentsForBranch(branchId));
+
   const getBranchPathLabel = (branchId: string) =>
     getFullNodePath(assemblyTree, branchId) || assemblyTree.name;
 
@@ -1152,18 +1164,22 @@ export function ProjectDetail({
     };
 
     setBranchComments((current) => {
-      const existing = current[activeBranch.branchId] || [];
+      const existing = flattenBranchComments(current[activeBranch.branchId] || []);
       if (replyToCommentId) {
+        const replyIndex = existing.findIndex(
+          (comment) => comment.id === replyToCommentId,
+        );
+
         return {
           ...current,
-          [activeBranch.branchId]: existing.map((comment) =>
-            comment.id === replyToCommentId
-              ? {
-                  ...comment,
-                  replies: [...(comment.replies || []), newComment],
-                }
-              : comment,
-          ),
+          [activeBranch.branchId]:
+            replyIndex >= 0
+              ? [
+                  ...existing.slice(0, replyIndex + 1),
+                  newComment,
+                  ...existing.slice(replyIndex + 1),
+                ]
+              : [newComment, ...existing],
         };
       }
 
@@ -1187,12 +1203,10 @@ export function ProjectDetail({
     }
   };
 
-  const renderCommentCard = (comment: BranchComment, nested = false) => (
+  const renderCommentCard = (comment: BranchComment) => (
     <article
       key={comment.id}
-      className={`grid gap-2 rounded-lg border border-slate-200 bg-white p-3 ${
-        nested ? "ml-3 border-l-2 border-l-slate-300" : ""
-      }`}
+      className="grid gap-2 rounded-lg border border-slate-200 bg-white p-3"
     >
       <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
         <span className="font-semibold text-slate-900">{comment.author}</span>
@@ -1211,8 +1225,7 @@ export function ProjectDetail({
           ))}
         </div>
       ) : null}
-      {!nested && (
-        <div className="flex justify-end">
+      <div className="flex justify-end">
           <Button
             variant="outline"
             size="sm"
@@ -1224,13 +1237,7 @@ export function ProjectDetail({
           >
             回复
           </Button>
-        </div>
-      )}
-      {comment.replies?.length ? (
-        <div className="grid gap-2">
-          {comment.replies.map((reply) => renderCommentCard(reply, true))}
-        </div>
-      ) : null}
+      </div>
     </article>
   );
 
@@ -1501,7 +1508,7 @@ export function ProjectDetail({
                               </span>
                             </span>
                             <Badge className={`${nodeChipClass} bg-amber-50 text-amber-700`}>
-                              留言：{getCommentsForBranch(branch.branchId).length}
+                              留言：{getVisibleCommentsForBranch(branch.branchId).length}
                             </Badge>
                           </span>
                           <span className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-700">
@@ -1594,14 +1601,14 @@ export function ProjectDetail({
                     </h3>
                     <Badge className="bg-slate-100 text-slate-700">
                       {activeBranch
-                        ? `${activeBranch.branchId} · ${getCommentsForBranch(activeBranch.branchId).length} 条`
+                        ? `${activeBranch.branchId} · ${getVisibleCommentsForBranch(activeBranch.branchId).length} 条`
                         : "暂无分支"}
                     </Badge>
                   </div>
 
                   <div className="grid gap-2">
-                    {activeBranch && getCommentsForBranch(activeBranch.branchId).length ? (
-                      getCommentsForBranch(activeBranch.branchId).map((comment) =>
+                    {activeBranch && getVisibleCommentsForBranch(activeBranch.branchId).length ? (
+                      getVisibleCommentsForBranch(activeBranch.branchId).map((comment) =>
                         renderCommentCard(comment),
                       )
                     ) : (
