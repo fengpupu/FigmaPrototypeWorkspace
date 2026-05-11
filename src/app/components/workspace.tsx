@@ -873,7 +873,7 @@ export function Workspace({
               setLeftPanelTab("comments");
               setLeftPanelOpen(true);
             }}
-            className={`w-9 h-9 flex items-center justify-center rounded ${
+            className={`${viewMode === "preview" ? "hidden" : ""} w-9 h-9 flex items-center justify-center rounded ${
               leftPanelOpen && leftPanelTab === "comments"
                 ? "bg-blue-600 text-white"
                 : "text-gray-400 hover:text-white hover:bg-gray-700"
