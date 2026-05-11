@@ -475,7 +475,11 @@ export function ProjectsHub({
         </div>
 
         {/* Projects Grid */}
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div>
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">
+            我管理的项目
+          </h2>
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
         {filteredProjects.map((project) => (
           <Card
             key={project.id}
@@ -554,6 +558,7 @@ export function ProjectsHub({
             </div>
           </Card>
         ))}
+          </div>
         </div>
       </div>
 
