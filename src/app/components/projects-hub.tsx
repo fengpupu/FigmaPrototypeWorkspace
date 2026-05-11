@@ -54,6 +54,7 @@ export interface Project {
 interface ProjectsHubProps {
   userRole: UserRole;
   onNavigateToProject: (projectId: string) => void;
+  currentUser?: string;
 }
 
 interface TeamMember {
@@ -66,7 +67,14 @@ interface TeamMember {
 export function ProjectsHub({
   userRole,
   onNavigateToProject,
+  currentUser = userRole === "admin" ? "张三" : "李四",
 }: ProjectsHubProps) {
+  const MAIN_ACCOUNT_ID = "1";
+  const isMainAccount = (member?: TeamMember) => member?.role === "主账号";
+  const mainAccountSelection = {
+    id: MAIN_ACCOUNT_ID,
+    projectRole: "admin" as const,
+  };
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilters, setRoleFilters] = useState<string[]>([]);
   const [showCreateDialog, setShowCreateDialog] =
@@ -83,7 +91,7 @@ export function ProjectsHub({
   const [newRootNodeName, setNewRootNodeName] = useState("");
   const [selectedMembers, setSelectedMembers] = useState<
     Array<{ id: string; projectRole: "admin" | "member" }>
-  >([]);
+  >([mainAccountSelection]);
   const [selectedNewMembers, setSelectedNewMembers] = useState<
     Array<{ id: string; projectRole: "admin" | "member" }>
   >([]);
@@ -121,6 +129,25 @@ export function ProjectsHub({
       role: "CAD工程师",
     },
   ]);
+
+  const getDefaultProjectMembers = () => {
+    const creator = teamMembers.find((member) => member.name === currentUser);
+    const defaults: Array<{ id: string; projectRole: "admin" | "member" }> = [
+      mainAccountSelection,
+    ];
+
+    if (creator && creator.id !== MAIN_ACCOUNT_ID) {
+      defaults.push({
+        id: creator.id,
+        projectRole: "admin",
+      });
+    }
+
+    return defaults;
+  };
+
+  const isDefaultCreateMember = (member?: TeamMember) =>
+    isMainAccount(member) || member?.name === currentUser;
 
   // Mock projects data
   const [projects, setProjects] = useState<Project[]>([
@@ -166,7 +193,7 @@ export function ProjectsHub({
       name: newProjectName,
       description: newProjectDescription,
       projectRole: "admin",
-      members: 1 + selectedMembers.length,
+      members: selectedMembers.length,
       lastUpdated: new Date().toISOString().split("T")[0],
       status: "active",
     };
@@ -175,11 +202,16 @@ export function ProjectsHub({
     setNewProjectName("");
     setNewProjectDescription("");
     setNewRootNodeName("");
-    setSelectedMembers([]);
+    setSelectedMembers(getDefaultProjectMembers());
     setShowCreateDialog(false);
   };
 
   const toggleMember = (memberId: string) => {
+    const member = teamMembers.find((teamMember) => teamMember.id === memberId);
+    if (isDefaultCreateMember(member)) {
+      return;
+    }
+
     if (selectedMembers.some((m) => m.id === memberId)) {
       setSelectedMembers(
         selectedMembers.filter((m) => m.id !== memberId),
@@ -193,6 +225,11 @@ export function ProjectsHub({
   };
 
   const removeMember = (memberId: string) => {
+    const member = teamMembers.find((teamMember) => teamMember.id === memberId);
+    if (isDefaultCreateMember(member)) {
+      return;
+    }
+
     setSelectedMembers(
       selectedMembers.filter((m) => m.id !== memberId),
     );
@@ -202,6 +239,11 @@ export function ProjectsHub({
     memberId: string,
     projectRole: "admin" | "member",
   ) => {
+    const member = teamMembers.find((teamMember) => teamMember.id === memberId);
+    if (isMainAccount(member)) {
+      return;
+    }
+
     setSelectedMembers(
       selectedMembers.map((m) =>
         m.id === memberId ? { ...m, projectRole } : m,
@@ -210,6 +252,11 @@ export function ProjectsHub({
   };
 
   const toggleNewMember = (memberId: string) => {
+    const member = teamMembers.find((teamMember) => teamMember.id === memberId);
+    if (isMainAccount(member)) {
+      return;
+    }
+
     if (selectedNewMembers.some((member) => member.id === memberId)) {
       setSelectedNewMembers(
         selectedNewMembers.filter((member) => member.id !== memberId),
@@ -223,6 +270,11 @@ export function ProjectsHub({
   };
 
   const removeNewMember = (memberId: string) => {
+    const member = teamMembers.find((teamMember) => teamMember.id === memberId);
+    if (isMainAccount(member)) {
+      return;
+    }
+
     setSelectedNewMembers(
       selectedNewMembers.filter((member) => member.id !== memberId),
     );
@@ -232,6 +284,11 @@ export function ProjectsHub({
     memberId: string,
     projectRole: "admin" | "member",
   ) => {
+    const member = teamMembers.find((teamMember) => teamMember.id === memberId);
+    if (isMainAccount(member)) {
+      return;
+    }
+
     setSelectedNewMembers(
       selectedNewMembers.map((member) =>
         member.id === memberId ? { ...member, projectRole } : member,
@@ -291,9 +348,9 @@ export function ProjectsHub({
     let matchesRole = true;
     if (roleFilters.length > 0) {
       matchesRole = roleFilters.some((filter) => {
-        if (filter === "owner") return project.role === "owner";
+        if (filter === "owner") return project.projectRole === "admin";
         if (filter === "member")
-          return project.role === "member";
+          return project.projectRole === "member";
         return false;
       });
     }
@@ -335,63 +392,64 @@ export function ProjectsHub({
         </p>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-        <Card
-          className={`p-6 cursor-pointer transition-all hover:shadow-lg ${
-            roleFilters.includes("owner")
-              ? "ring-2 ring-blue-500 bg-blue-50"
-              : ""
-          }`}
-          onClick={() => toggleRoleFilter("owner")}
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600 mb-1">
-                我创建的项目
-              </p>
-              <p className="text-3xl font-bold text-gray-900">
-                {
-                  projects.filter((p) => p.role === "owner")
-                    .length
-                }
-              </p>
+      <div className="space-y-6">
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+          <Card
+            className={`p-6 cursor-pointer transition-all hover:shadow-lg ${
+              roleFilters.includes("owner")
+                ? "ring-2 ring-blue-500 bg-blue-50"
+                : ""
+            }`}
+            onClick={() => toggleRoleFilter("owner")}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600 mb-1">
+                  我创建的项目
+                </p>
+                <p className="text-3xl font-bold text-gray-900">
+                  {
+                    projects.filter((p) => p.projectRole === "admin")
+                      .length
+                  }
+                </p>
+              </div>
+              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                <FolderTree className="w-6 h-6 text-blue-600" />
+              </div>
             </div>
-            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-              <FolderTree className="w-6 h-6 text-blue-600" />
-            </div>
-          </div>
-        </Card>
+          </Card>
 
-        <Card
-          className={`p-6 cursor-pointer transition-all hover:shadow-lg ${
-            roleFilters.includes("member")
-              ? "ring-2 ring-green-500 bg-green-50"
-              : ""
-          }`}
-          onClick={() => toggleRoleFilter("member")}
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600 mb-1">
-                我参与的项目
-              </p>
-              <p className="text-3xl font-bold text-gray-900">
-                {
-                  projects.filter((p) => p.role === "member")
-                    .length
-                }
-              </p>
+          <Card
+            className={`p-6 cursor-pointer transition-all hover:shadow-lg ${
+              roleFilters.includes("member")
+                ? "ring-2 ring-green-500 bg-green-50"
+                : ""
+            }`}
+            onClick={() => toggleRoleFilter("member")}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600 mb-1">
+                  我参与的项目
+                </p>
+                <p className="text-3xl font-bold text-gray-900">
+                  {
+                    projects.filter((p) => p.projectRole === "member")
+                      .length
+                  }
+                </p>
+              </div>
+              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                <Users className="w-6 h-6 text-green-600" />
+              </div>
             </div>
-            <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-              <Users className="w-6 h-6 text-green-600" />
-            </div>
-          </div>
-        </Card>
-      </div>
+          </Card>
+        </div>
 
-      {/* Toolbar */}
-      <div className="flex items-center justify-between mb-6">
+        {/* Toolbar */}
+        <div className="flex items-center justify-between gap-4">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
           <Input
@@ -404,15 +462,20 @@ export function ProjectsHub({
         </div>
 
         {canManageProjects && (
-          <Button onClick={() => setShowCreateDialog(true)}>
+          <Button
+            onClick={() => {
+              setSelectedMembers(getDefaultProjectMembers());
+              setShowCreateDialog(true);
+            }}
+          >
             <Plus className="w-4 h-4 mr-2" />
             创建项目
           </Button>
         )}
-      </div>
+        </div>
 
-      {/* Projects Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {/* Projects Grid */}
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
         {filteredProjects.map((project) => (
           <Card
             key={project.id}
@@ -429,8 +492,7 @@ export function ProjectsHub({
                 </p>
               </div>
 
-              {(userRole === "admin" ||
-                project.projectRole === "admin") && (
+              {project.projectRole === "admin" && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -492,6 +554,7 @@ export function ProjectsHub({
             </div>
           </Card>
         ))}
+        </div>
       </div>
 
       {filteredProjects.length === 0 && (
@@ -574,21 +637,21 @@ export function ProjectsHub({
                       (m) => m.id === selectedMember.id,
                     );
                     if (!member) return null;
+                    const memberIsMainAccount = isMainAccount(member);
+                    const memberIsDefault = isDefaultCreateMember(member);
                     return (
                       <div
                         key={selectedMember.id}
-                        className="flex items-center gap-3 p-2 bg-white rounded border"
+                        className="grid grid-cols-[minmax(0,1fr)_128px_64px] items-center gap-3 p-2 bg-white rounded border"
                       >
-                        <div className="flex-1">
+                        <div className="min-w-0">
                           <div className="font-medium text-gray-900 text-sm">
                             {member.name}
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {member.email}
                           </div>
                         </div>
                         <Select
                           value={selectedMember.projectRole}
+                          disabled={memberIsMainAccount}
                           onValueChange={(
                             value: "admin" | "member",
                           ) =>
@@ -610,14 +673,20 @@ export function ProjectsHub({
                             </SelectItem>
                           </SelectContent>
                         </Select>
-                        <button
-                          onClick={() =>
-                            removeMember(selectedMember.id)
-                          }
-                          className="text-red-600 hover:text-red-700 hover:bg-red-50 rounded p-1"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
+                        {memberIsDefault ? (
+                          <Badge className="w-14 justify-center bg-blue-50 text-blue-700">
+                            {memberIsMainAccount ? "主账号" : "创建者"}
+                          </Badge>
+                        ) : (
+                          <button
+                            onClick={() =>
+                              removeMember(selectedMember.id)
+                            }
+                            className="flex h-8 w-8 items-center justify-center justify-self-center rounded text-red-600 hover:bg-red-50 hover:text-red-700"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -626,16 +695,23 @@ export function ProjectsHub({
 
               {/* Member List */}
               <div className="border rounded-lg max-h-64 overflow-y-auto">
-                {teamMembers.map((member) => (
+                {teamMembers.map((member) => {
+                  const memberIsDefault = isDefaultCreateMember(member);
+                  return (
                   <div
                     key={member.id}
-                    className="flex items-center gap-3 p-3 hover:bg-gray-50 border-b last:border-b-0 cursor-pointer"
+                    className={`flex items-center gap-3 p-3 border-b last:border-b-0 ${
+                      memberIsDefault
+                        ? "cursor-not-allowed bg-blue-50/40"
+                        : "cursor-pointer hover:bg-gray-50"
+                    }`}
                     onClick={() => toggleMember(member.id)}
                   >
                     <Checkbox
                       checked={selectedMembers.some(
                         (m) => m.id === member.id,
                       )}
+                      disabled={memberIsDefault}
                       onCheckedChange={() =>
                         toggleMember(member.id)
                       }
@@ -644,20 +720,15 @@ export function ProjectsHub({
                       <div className="font-medium text-gray-900">
                         {member.name}
                       </div>
-                      <div className="text-sm text-gray-500">
-                        {member.email}
-                      </div>
                     </div>
-                    <Badge className="bg-gray-100 text-gray-700">
-                      {member.role}
-                    </Badge>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               <p className="text-sm text-gray-500">
                 已选择 {selectedMembers.length}{" "}
-                位成员，可在上方为每位成员单独分配权限
+                位成员，主账号默认加入且固定为管理员
               </p>
             </div>
           </div>
@@ -670,7 +741,7 @@ export function ProjectsHub({
                 setNewProjectName("");
                 setNewProjectDescription("");
                 setNewRootNodeName("");
-                setSelectedMembers([]);
+                setSelectedMembers(getDefaultProjectMembers());
               }}
             >
               取消
@@ -748,14 +819,11 @@ export function ProjectsHub({
                     return (
                       <div
                         key={selectedMember.id}
-                        className="flex items-center gap-3 p-2 bg-white rounded border"
+                        className="grid grid-cols-[minmax(0,1fr)_128px_64px] items-center gap-3 p-2 bg-white rounded border"
                       >
-                        <div className="flex-1">
+                        <div className="min-w-0">
                           <div className="font-medium text-gray-900 text-sm">
                             {member.name}
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {member.email}
                           </div>
                         </div>
                         <Select
@@ -764,7 +832,7 @@ export function ProjectsHub({
                             updateNewMemberRole(selectedMember.id, value)
                           }
                         >
-                          <SelectTrigger className="w-32">
+                          <SelectTrigger className="w-full">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -780,7 +848,7 @@ export function ProjectsHub({
                           onClick={() =>
                             removeNewMember(selectedMember.id)
                           }
-                          className="text-red-600 hover:text-red-700 hover:bg-red-50 rounded p-1"
+                          className="flex h-8 w-8 items-center justify-center justify-self-center rounded text-red-600 hover:bg-red-50 hover:text-red-700"
                         >
                           <X className="w-4 h-4" />
                         </button>
@@ -792,7 +860,7 @@ export function ProjectsHub({
 
               {/* Member List */}
               <div className="border rounded-lg max-h-64 overflow-y-auto">
-                {teamMembers.map((member) => (
+                {teamMembers.filter((member) => !isMainAccount(member)).map((member) => (
                   <div
                     key={member.id}
                     className="flex items-center gap-3 p-3 hover:bg-gray-50 border-b last:border-b-0 cursor-pointer"
@@ -811,13 +879,7 @@ export function ProjectsHub({
                       <div className="font-medium text-gray-900">
                         {member.name}
                       </div>
-                      <div className="text-sm text-gray-500">
-                        {member.email}
-                      </div>
                     </div>
-                    <Badge className="bg-gray-100 text-gray-700">
-                      {member.role}
-                    </Badge>
                   </div>
                 ))}
               </div>

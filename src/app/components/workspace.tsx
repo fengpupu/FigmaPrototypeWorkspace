@@ -13,8 +13,8 @@ import {
   ExternalLink,
   History,
   GitBranch,
+  GitBranchPlus,
   AlertCircle,
-  UserPlus,
   CheckCircle2,
   Package,
   FileText,
@@ -134,6 +134,8 @@ export function Workspace({
     useState<ChildSubmission | null>(null);
   const [selectedNode, setSelectedNode] =
     useState<WorkspaceNode | null>(null);
+  const [assignBranchName, setAssignBranchName] = useState("");
+  const [assignAssignee, setAssignAssignee] = useState("");
   const [
     selectedNodeForVersionSwitch,
     setSelectedNodeForVersionSwitch,
@@ -600,7 +602,57 @@ export function Workspace({
 
   const handleAssignNode = (node: WorkspaceNode) => {
     setSelectedNode(node);
+    setAssignBranchName("");
+    setAssignAssignee("");
     setShowAssignDialog(true);
+  };
+
+  const handleConfirmAssignNode = () => {
+    const branchName = assignBranchName.trim();
+
+    if (!selectedNode) {
+      return;
+    }
+
+    if (!branchName) {
+      alert("请输入分支名称");
+      return;
+    }
+
+    if (!assignAssignee) {
+      alert("请选择负责人");
+      return;
+    }
+
+    const branchExists = nodes.some((node) =>
+      node.branches.some((branch) => branch.branchId === branchName),
+    );
+
+    if (branchExists) {
+      alert("分支名称已存在");
+      return;
+    }
+
+    setNodes((currentNodes) =>
+      currentNodes.map((node) =>
+        node.id === selectedNode.id
+          ? {
+              ...node,
+              branches: [
+                ...node.branches,
+                {
+                  branchId: branchName,
+                  assignee: assignAssignee,
+                  status: "working" as const,
+                },
+              ],
+            }
+          : node,
+      ),
+    );
+    setAssignBranchName("");
+    setAssignAssignee("");
+    setShowAssignDialog(false);
   };
 
   const getNodeVersionCommits = (nodeId?: string) =>
@@ -884,11 +936,13 @@ export function Workspace({
                                 variant="ghost"
                                 size="sm"
                                 className="h-6 px-2 text-gray-400 hover:text-white hover:bg-gray-600 flex-shrink-0"
+                                title="新增负责分支"
+                                aria-label={`为${node.name}新增负责分支`}
                                 onClick={() =>
                                   handleAssignNode(node)
                                 }
                               >
-                                <UserPlus className="w-3 h-3" />
+                                <GitBranchPlus className="w-3.5 h-3.5" />
                               </Button>
                             </div>
                           </div>
@@ -904,7 +958,10 @@ export function Workspace({
                                 }}
                               >
                                 <GitBranch className="w-3 h-3 text-gray-500 flex-shrink-0" />
-                                <span className="text-xs text-gray-400 flex-1">
+                                <span className="min-w-0 flex-1 truncate text-xs text-gray-300">
+                                  {branch.branchId}
+                                </span>
+                                <span className="shrink-0 text-xs text-gray-500">
                                   {branch.assignee}
                                 </span>
                               </div>
@@ -1075,8 +1132,6 @@ export function Workspace({
                                       <span>{commit.author}</span>
                                       <span>·</span>
                                       <span>{commit.date}</span>
-                                      <span>·</span>
-                                      <span>{commit.filesChanged} 个文件</span>
                                       {commit.branchId && (
                                         <>
                                           <span>·</span>
@@ -1750,16 +1805,26 @@ export function Workspace({
       >
         <DialogContent className="max-h-[80vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>分配负责人</DialogTitle>
+            <DialogTitle>创建负责分支</DialogTitle>
             <DialogDescription>
-              为节点"{selectedNode?.name}"分配新的负责人
+              为节点“{selectedNode?.name}”创建新的负责人分支
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4 overflow-y-auto flex-1 min-h-0">
             <div className="space-y-2">
+              <Label htmlFor="assign-branch-name">分支名称</Label>
+              <Input
+                id="assign-branch-name"
+                value={assignBranchName}
+                onChange={(event) => setAssignBranchName(event.target.value)}
+                placeholder="例如: branch-1-1-zhangsan"
+              />
+            </div>
+
+            <div className="space-y-2">
               <Label>选择负责人</Label>
-              <Select>
+              <Select value={assignAssignee} onValueChange={setAssignAssignee}>
                 <SelectTrigger>
                   <SelectValue placeholder="选择成员" />
                 </SelectTrigger>
@@ -1767,7 +1832,7 @@ export function Workspace({
                   {members.map((member) => (
                     <SelectItem
                       key={member.id}
-                      value={member.id}
+                      value={member.name}
                     >
                       {member.name}
                     </SelectItem>
@@ -1776,36 +1841,24 @@ export function Workspace({
               </Select>
             </div>
 
-            {selectedNode &&
-              selectedNode.branches.length > 0 && (
-                <div className="bg-gray-50 p-3 rounded-lg">
-                  <div className="text-sm font-medium text-gray-900 mb-2">
-                    当前已分配的负责人:
-                  </div>
-                  <div className="space-y-1">
-                    {selectedNode.branches.map((branch) => (
-                      <div
-                        key={branch.branchId}
-                        className="text-sm text-gray-600 flex items-center gap-2"
-                      >
-                        <GitBranch className="w-3 h-3" />
-                        {branch.assignee} ({branch.branchId})
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
           </div>
 
           <DialogFooter className="flex-shrink-0">
             <Button
               variant="outline"
-              onClick={() => setShowAssignDialog(false)}
+              onClick={() => {
+                setShowAssignDialog(false);
+                setAssignBranchName("");
+                setAssignAssignee("");
+              }}
             >
               取消
             </Button>
-            <Button onClick={() => setShowAssignDialog(false)}>
-              确认分配
+            <Button
+              onClick={handleConfirmAssignNode}
+              disabled={!assignBranchName.trim() || !assignAssignee}
+            >
+              确认创建
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1928,8 +1981,6 @@ export function Workspace({
                     <span>{commit.author}</span>
                     <span>·</span>
                     <span>{commit.date}</span>
-                    <span>·</span>
-                    <span>{commit.filesChanged} 个文件</span>
                     {commit.branchId && (
                       <div className="flex items-center gap-2">
                         <span>·</span>

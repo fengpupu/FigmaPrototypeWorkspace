@@ -292,6 +292,7 @@ export default function App() {
         {activeView === "projects" && (
           <ProjectsHub
             userRole={userRole}
+            currentUser={userRole === "admin" ? "张三" : "李四"}
             onNavigateToProject={handleNavigateToProjectDetail}
           />
         )}

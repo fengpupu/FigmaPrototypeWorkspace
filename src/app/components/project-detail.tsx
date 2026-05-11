@@ -6,7 +6,6 @@ import {
   ChevronDown,
   GitBranch,
   ExternalLink,
-  UserPlus,
   X,
   Plus,
   Eye,
@@ -39,6 +38,7 @@ interface NodeBranch {
   branchId: string;
   assignee: string;
   hasCommits?: boolean;
+  baseVersion?: string;
 }
 
 interface TreeNode {
@@ -104,6 +104,7 @@ export function ProjectDetail({
   const [showCreateBranchDialog, setShowCreateBranchDialog] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
   const [newBranchAssignee, setNewBranchAssignee] = useState<string>("");
+  const [newBranchBaseVersion, setNewBranchBaseVersion] = useState("current-main");
 
   // Mock project data
   const project = {
@@ -355,8 +356,14 @@ export function ProjectDetail({
     setShowAddMemberDialog(false);
   };
 
+  const hasBranchInTree = (tree: TreeNode, branchId: string): boolean =>
+    tree.branches.some((branch) => branch.branchId === branchId) ||
+    Boolean(tree.children?.some((child) => hasBranchInTree(child, branchId)));
+
   const handleCreateBranch = () => {
-    if (!newBranchName.trim()) {
+    const trimmedBranchName = newBranchName.trim();
+
+    if (!trimmedBranchName) {
       alert("请输入分支名称");
       return;
     }
@@ -367,15 +374,16 @@ export function ProjectDetail({
     }
 
     // 检查分支名称是否已存在
-    if (assemblyTree.branches.some((b) => b.branchId === newBranchName)) {
+    if (hasBranchInTree(assemblyTree, trimmedBranchName)) {
       alert("分支名称已存在");
       return;
     }
 
     // 创建新分支
     const newBranch: NodeBranch = {
-      branchId: newBranchName,
+      branchId: trimmedBranchName,
       assignee: newBranchAssignee,
+      baseVersion: newBranchBaseVersion,
     };
 
     setAssemblyTree({
@@ -385,10 +393,16 @@ export function ProjectDetail({
 
     setNewBranchName("");
     setNewBranchAssignee("");
+    setNewBranchBaseVersion("current-main");
     setShowCreateBranchDialog(false);
 
     // 自动切换到新创建的分支
-    handleViewBranchDetail(newBranchName, assemblyTree.name, assemblyTree.name);
+    setFocusedBranch({
+      branchId: trimmedBranchName,
+      nodeName: assemblyTree.name,
+      nodePath: assemblyTree.name,
+    });
+    setExpandedNodes(new Set([assemblyTree.id]));
   };
 
   // 检查当前用户是否是项目管理员
@@ -933,6 +947,30 @@ export function ProjectDetail({
   const getBranchLatestVersion = (branch: NodeBranch) =>
     `${branch.branchId} / 提交 ${commitCode(`${branch.branchId}-latest`)}`;
 
+  const rootMainBranch =
+    assemblyTree.branches.find((branch) => branch.branchId === "main") ||
+    assemblyTree.branches[0] ||
+    null;
+  const rootBranchBaseOptions = rootMainBranch
+    ? [
+        {
+          value: "current-main",
+          label: `当前主节点版本：${getBranchLatestVersion(rootMainBranch)}`,
+        },
+        {
+          value: "root-baseline",
+          label: `${assemblyTree.name} 基线版本：${rootMainBranch.branchId} / 提交 ${commitCode(
+            `${assemblyTree.id}-baseline`,
+          )}`,
+        },
+      ]
+    : [
+        {
+          value: "current-main",
+          label: "当前主节点版本",
+        },
+      ];
+
   const renderNodeMeta = (node: TreeNode, branch?: NodeBranch | null) => (
     <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-white/80 p-2 text-xs">
       <div className="min-w-0">
@@ -1215,16 +1253,24 @@ export function ProjectDetail({
         </div>
 
         <div className="flex gap-3">
+          {isProjectAdmin && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setNewBranchName("");
+                setNewBranchAssignee("");
+                setNewBranchBaseVersion("current-main");
+                setShowCreateBranchDialog(true);
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              添加主分支
+            </Button>
+          )}
           <Button variant="outline" onClick={() => setShowMembersDialog(true)}>
             <Users className="mr-2 h-4 w-4" />
             项目成员 ({members.length})
           </Button>
-          {isProjectAdmin && (
-            <Button onClick={() => setShowAddMemberDialog(true)}>
-              <UserPlus className="mr-2 h-4 w-4" />
-              添加成员
-            </Button>
-          )}
         </div>
       </div>
 
@@ -1746,12 +1792,8 @@ export function ProjectDetail({
                       <div className="font-medium text-gray-900">
                         {member.name}
                       </div>
-                      <div className="text-sm text-gray-500">{member.email}</div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge className="bg-gray-100 text-gray-700">
-                        {member.role}
-                      </Badge>
                       {isCurrentUserAdmin && !isMemberMainAccount ? (
                         <Select
                           value={member.projectRole}
@@ -1829,22 +1871,21 @@ export function ProjectDetail({
         </DialogContent>
       </Dialog>
 
-      {/* Create Branch Dialog */}
       <Dialog open={showCreateBranchDialog} onOpenChange={setShowCreateBranchDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>创建新分支</DialogTitle>
+            <DialogTitle>添加主分支</DialogTitle>
             <DialogDescription>
-              为根节点"{assemblyTree.name}"创建一个新的工作分支
+              为根节点“{assemblyTree.name}”创建新的主分支，可选择基于当前主节点版本或基线版本开始。
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="branch-name">分支名称</Label>
+              <Label htmlFor="root-branch-name">分支名称</Label>
               <Input
-                id="branch-name"
-                placeholder="例如: feature-optimization"
+                id="root-branch-name"
+                placeholder="例如: branch-root-zhangsan"
                 value={newBranchName}
                 onChange={(e) => setNewBranchName(e.target.value)}
                 onKeyDown={(e) => {
@@ -1856,25 +1897,38 @@ export function ProjectDetail({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="branch-assignee">负责人</Label>
+              <Label htmlFor="root-branch-base-version">基于版本</Label>
+              <Select
+                value={newBranchBaseVersion}
+                onValueChange={setNewBranchBaseVersion}
+              >
+                <SelectTrigger id="root-branch-base-version">
+                  <SelectValue placeholder="选择主节点版本" />
+                </SelectTrigger>
+                <SelectContent>
+                  {rootBranchBaseOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="root-branch-assignee">负责人</Label>
               <Select value={newBranchAssignee} onValueChange={setNewBranchAssignee}>
-                <SelectTrigger id="branch-assignee">
+                <SelectTrigger id="root-branch-assignee">
                   <SelectValue placeholder="选择负责人" />
                 </SelectTrigger>
                 <SelectContent>
                   {members.map((member) => (
                     <SelectItem key={member.id} value={member.name}>
-                      <div className="flex items-center gap-2">
-                        <span>{member.name}</span>
-                        <span className="text-xs text-gray-500">{member.role}</span>
-                      </div>
+                      {member.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-sm text-gray-500">
-                从项目成员中选择分支负责人
-              </p>
             </div>
           </div>
 
@@ -1885,15 +1939,20 @@ export function ProjectDetail({
                 setShowCreateBranchDialog(false);
                 setNewBranchName("");
                 setNewBranchAssignee("");
+                setNewBranchBaseVersion("current-main");
               }}
             >
               取消
             </Button>
             <Button
               onClick={handleCreateBranch}
-              disabled={!newBranchName.trim() || !newBranchAssignee}
+              disabled={
+                !newBranchName.trim() ||
+                !newBranchAssignee ||
+                !newBranchBaseVersion
+              }
             >
-              创建分支
+              创建主分支
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1927,9 +1986,6 @@ export function ProjectDetail({
                         <div className="flex-1">
                           <div className="font-medium text-gray-900 text-sm">
                             {member.name}
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {member.email}
                           </div>
                         </div>
                         <Select
@@ -1981,13 +2037,7 @@ export function ProjectDetail({
                         <div className="font-medium text-gray-900">
                           {member.name}
                         </div>
-                        <div className="text-sm text-gray-500">
-                          {member.email}
-                        </div>
                       </div>
-                      <Badge className="bg-gray-100 text-gray-700">
-                        {member.role}
-                      </Badge>
                     </div>
                   ))}
                 </div>
